@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "AttendanceApp",
-    "slug": "AttendanceApp",
+    "name": "SecuryScope Attendance",
+    "slug": "securyscope-attendance",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/securyscope-logo.svg",
     "scheme": "attendanceapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,

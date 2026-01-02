@@ -40,11 +40,15 @@ export const AuthProvider = ({ children }) => {
       const storedUser = await AsyncStorage.getItem('userData');
 
       if (storedToken && storedUser) {
+        const userData = JSON.parse(storedUser);
         setToken(storedToken);
-        setUser(JSON.parse(storedUser));
+        setUser(userData);
       }
     } catch (error) {
       console.error('Error loading auth data:', error);
+      // Clear any corrupted data
+      await AsyncStorage.removeItem('authToken');
+      await AsyncStorage.removeItem('userData');
     } finally {
       setLoading(false);
     }
@@ -72,6 +76,9 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      // Call API logout
+      await apiService.logout();
+      
       // Clear state
       setToken(null);
       setUser(null);
@@ -79,6 +86,7 @@ export const AuthProvider = ({ children }) => {
       // Clear storage
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
+      await AsyncStorage.removeItem('deviceId');
 
       return { success: true };
     } catch (error) {
@@ -94,8 +102,7 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     isAuthenticated: !!token,
-    isAdmin: user?.role === 'admin',
-    isEmployee: user?.role === 'employee',
+    isEmployee: user?.role === 2,
   };
 
   return (

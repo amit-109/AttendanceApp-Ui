@@ -1,26 +1,28 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { Text, TouchableOpacity } from 'react-native';
+import { Text, TouchableOpacity, Image, View } from 'react-native';
 import { useAuth } from '../contexts/AuthContext';
-import AdminLeaveManagementScreen from '../screens/AdminLeaveManagementScreen';
 import AttendanceListScreen from '../screens/AttendanceListScreen';
-import LeaveApplicationScreen from '../screens/LeaveApplicationScreen';
-import LeaveHistoryScreen from '../screens/LeaveHistoryScreen';
+import LeaveManagementScreen from '../screens/LeaveManagementScreen';
 import LoginScreen from '../screens/LoginScreen';
 import MarkAttendanceScreen from '../screens/MarkAttendanceScreen';
+import ProfileScreen from '../screens/ProfileScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
 
 function TabNavigator() {
-  const { logout, user } = useAuth();
-
-  const handleLogout = async () => {
-    await logout();
-  };
-
-  const isAdmin = user?.role === 'admin';
+  const LogoTitle = () => (
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <Image 
+        source={require('../../assets/images/SE_Logo_Rev1.png')}
+        style={{ width: 24, height: 24, marginRight: 8, tintColor: 'white' }}
+        resizeMode="contain"
+      />
+      <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>SecuryScope</Text>
+    </View>
+  );
 
   return (
     <Tab.Navigator
@@ -32,12 +34,10 @@ function TabNavigator() {
             iconName = 'camera';
           } else if (route.name === 'AttendanceList') {
             iconName = 'list';
-          } else if (route.name === 'LeaveApplication') {
-            iconName = 'add-circle';
-          } else if (route.name === 'LeaveHistory') {
-            iconName = 'history';
-          } else if (route.name === 'AdminLeaveManagement') {
-            iconName = 'admin-panel-settings';
+          } else if (route.name === 'LeaveManagement') {
+            iconName = 'event-note';
+          } else if (route.name === 'Profile') {
+            iconName = 'person';
           }
 
           return <MaterialIcons name={iconName} size={size} color={color} />;
@@ -47,61 +47,40 @@ function TabNavigator() {
         headerStyle: { backgroundColor: '#4CAF50' },
         headerTintColor: '#fff',
         headerTitleStyle: { fontWeight: 'bold' },
-        headerRight: () => (
-          <TouchableOpacity onPress={handleLogout} style={{ marginRight: 15 }}>
-            <Text style={{ color: '#fff', fontWeight: 'bold' }}>Logout</Text>
-          </TouchableOpacity>
-        ),
       })}
     >
-      {!isAdmin && (
-        <Tab.Screen
-          name="MarkAttendance"
-          component={MarkAttendanceScreen}
-          options={{
-            title: 'Mark Attendance',
-            tabBarLabel: 'Attendance'
-          }}
-        />
-      )}
+      <Tab.Screen
+        name="MarkAttendance"
+        component={MarkAttendanceScreen}
+        options={{
+          headerTitle: () => <LogoTitle />,
+          tabBarLabel: 'Attendance'
+        }}
+      />
       <Tab.Screen
         name="AttendanceList"
         component={AttendanceListScreen}
         options={{
-          title: 'Attendance History',
+          headerTitle: () => <LogoTitle />,
           tabBarLabel: 'History'
         }}
       />
-      {!isAdmin && (
-        <>
-          <Tab.Screen
-            name="LeaveApplication"
-            component={LeaveApplicationScreen}
-            options={{
-              title: 'Apply for Leave',
-              tabBarLabel: 'Apply Leave'
-            }}
-          />
-          <Tab.Screen
-            name="LeaveHistory"
-            component={LeaveHistoryScreen}
-            options={{
-              title: 'Leave History',
-              tabBarLabel: 'My Leaves'
-            }}
-          />
-        </>
-      )}
-      {isAdmin && (
-        <Tab.Screen
-          name="AdminLeaveManagement"
-          component={AdminLeaveManagementScreen}
-          options={{
-            title: 'Leave Management',
-            tabBarLabel: 'Manage Leaves'
-          }}
-        />
-      )}
+      <Tab.Screen
+        name="LeaveManagement"
+        component={LeaveManagementScreen}
+        options={{
+          headerTitle: () => <LogoTitle />,
+          tabBarLabel: 'Leaves'
+        }}
+      />
+      <Tab.Screen
+        name="Profile"
+        component={ProfileScreen}
+        options={{
+          headerTitle: () => <LogoTitle />,
+          tabBarLabel: 'Profile'
+        }}
+      />
     </Tab.Navigator>
   );
 }

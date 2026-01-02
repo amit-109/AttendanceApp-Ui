@@ -19,11 +19,47 @@ export default function AttendanceListScreen() {
 
   const loadAttendanceHistory = async () => {
     try {
-      const data = await apiService.getAttendanceHistory(user.role);
-      setAttendanceData(data);
+      let data;
+      if (user.role === 1) {
+        // Admin - get all attendance records
+        data = await apiService.getAttendanceHistory();
+      } else {
+        // Employee - get own attendance records
+        data = await apiService.getAttendanceByUserId(user.user_id || user.id);
+      }
+      
+      // Ensure data is an array
+      if (!Array.isArray(data)) {
+        console.log('API returned non-array data:', data);
+        setAttendanceData([]);
+        return;
+      }
+      
+      // Transform backend data to match frontend expectations
+      const transformedData = data.map((record, index) => ({
+        Id: record.Id || record.id || index,
+        date: record.CreatedAt || record.created_at,
+        checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
+        checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
+        status: 'present',
+        location: {
+          latitude: parseFloat(record.Latitude || record.latitude || 0),
+          longitude: parseFloat(record.Longitude || record.longitude || 0)
+        },
+        photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
+        employee: user.role === 1 ? {
+          _id: record.UserId || record.user_id,
+          name: record.UserName || record.user_name || 'Unknown',
+          email: record.UserEmail || record.user_email || 'unknown@email.com'
+        } : null,
+        notes: record.Notes || record.notes || null
+      }));
+      
+      setAttendanceData(transformedData);
     } catch (error) {
       Alert.alert('Error', 'Failed to load attendance history');
       console.error('Error loading attendance:', error);
+      setAttendanceData([]);
     } finally {
       setLoading(false);
     }
@@ -59,51 +95,15 @@ export default function AttendanceListScreen() {
     }
   };
 
-  const groupByMonth = (data) => {
-    const grouped = {};
-    data.forEach(item => {
-      const date = new Date(item.date);
-      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      if (!grouped[monthKey]) {
-        grouped[monthKey] = [];
-      }
-      grouped[monthKey].push(item);
-    });
-    return grouped;
-  };
-
-  const getMonthlySummary = (monthData) => {
-    const totalDays = monthData.length;
-    const presentDays = monthData.filter(item => item.status === 'present').length;
-    const lateDays = monthData.filter(item => item.status === 'late').length;
-    const absentDays = monthData.filter(item => item.status === 'absent').length;
-    const workingDays = presentDays + lateDays;
-
-    return {
-      totalDays,
-      presentDays,
-      lateDays,
-      absentDays,
-      workingDays,
-      attendancePercentage: totalDays > 0 ? ((workingDays / totalDays) * 100).toFixed(1) : 0
-    };
-  };
-
-  const formatMonth = (monthKey) => {
-    const [year, month] = monthKey.split('-');
-    const date = new Date(year, month - 1);
-    return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
-  };
-
   const renderAttendanceItem = ({ item }) => (
     <View style={styles.item}>
       <View style={styles.itemContent}>
-        <View style={styles.header}>
+        <View style={styles.itemHeader}>
           <View style={styles.headerLeft}>
             <Text variant="titleMedium" style={styles.date}>
               {formatDate(item.date)}
             </Text>
-            {user.role === 'admin' && item.employee && (
+            {user.role === 1 && item.employee && (
               <Text variant="bodySmall" style={styles.employeeName}>
                 {item.employee.name} ({item.employee.email})
               </Text>
@@ -159,108 +159,57 @@ export default function AttendanceListScreen() {
     </View>
   );
 
-  const renderMonthlyItem = ({ item: monthKey }) => {
-    const monthData = groupedData[monthKey];
-    const summary = getMonthlySummary(monthData);
-
-    return (
-      <View style={styles.monthItem}>
-        <View style={styles.monthHeader}>
-          <Text variant="titleMedium" style={styles.monthTitle}>
-            {formatMonth(monthKey)}
-          </Text>
-          <Text variant="bodyLarge" style={styles.percentage}>
-            {summary.attendancePercentage}%
-          </Text>
-        </View>
-
-        <View style={styles.statsContainer}>
-          <View style={styles.stat}>
-            <Text variant="headlineSmall" style={styles.statNumber}>{summary.totalDays}</Text>
-            <Text variant="bodySmall" style={styles.statLabel}>Total Days</Text>
-          </View>
-          <View style={styles.stat}>
-            <Text variant="headlineSmall" style={[styles.statNumber, { color: '#16a34a' }]}>{summary.presentDays}</Text>
-            <Text variant="bodySmall" style={styles.statLabel}>Present</Text>
-          </View>
-          <View style={styles.stat}>
-            <Text variant="headlineSmall" style={[styles.statNumber, { color: '#ea580c' }]}>{summary.lateDays}</Text>
-            <Text variant="bodySmall" style={styles.statLabel}>Late</Text>
-          </View>
-          <View style={styles.stat}>
-            <Text variant="headlineSmall" style={[styles.statNumber, { color: '#dc2626' }]}>{summary.absentDays}</Text>
-            <Text variant="bodySmall" style={styles.statLabel}>Absent</Text>
-          </View>
-        </View>
-      </View>
-    );
-  };
-
-  const groupedData = groupByMonth(attendanceData);
-  const monthKeys = Object.keys(groupedData).sort().reverse(); // Most recent first
-
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <View style={styles.loadingContent}>
-          <ActivityIndicator size="large" />
-          <Text variant="bodyLarge" style={styles.loadingText}>Loading attendance history...</Text>
-        </View>
+        <ActivityIndicator size="large" />
+        <Text variant="bodyLarge" style={styles.loadingText}>
+          Loading attendance history...
+        </Text>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <View style={styles.content}>
+      <View style={styles.header}>
         <Text variant="headlineMedium" style={styles.title}>
           Attendance History
         </Text>
-
-        <Text variant="bodyMedium" style={styles.welcome}>
-          Welcome, {user?.name}
-        </Text>
-
-        <SegmentedButtons
-          value={viewMode}
-          onValueChange={setViewMode}
-          buttons={[
-            { value: 'all', label: 'All Records' },
-            { value: 'monthly', label: 'Monthly View' },
-          ]}
-          style={styles.segmentedButtons}
-        />
-
-        {attendanceData.length === 0 ? (
-          <View style={styles.empty}>
-            <MaterialIcons name="event-note" size={48} color="#9CA3AF" />
-            <Text variant="bodyLarge" style={styles.emptyText}>
-              No attendance records found
-            </Text>
-            <Text variant="bodySmall" style={styles.emptySubtext}>
-              Your attendance history will appear here once you start marking attendance
-            </Text>
-          </View>
-        ) : viewMode === 'monthly' ? (
-          <FlatList
-            data={monthKeys}
-            keyExtractor={(item) => item}
-            renderItem={renderMonthlyItem}
-            showsVerticalScrollIndicator={false}
-            refreshing={loading}
-            onRefresh={loadAttendanceHistory}
-          />
-        ) : (
-          <FlatList
-            data={attendanceData}
-            keyExtractor={(item) => item._id}
-            renderItem={renderAttendanceItem}
-            showsVerticalScrollIndicator={false}
-            refreshing={loading}
-            onRefresh={loadAttendanceHistory}
+        
+        {user.role === 1 && (
+          <SegmentedButtons
+            value={viewMode}
+            onValueChange={setViewMode}
+            buttons={[
+              { value: 'all', label: 'All Records' },
+              { value: 'monthly', label: 'Monthly' },
+              { value: 'employees', label: 'By Employee' },
+            ]}
+            style={styles.segmentedButtons}
           />
         )}
       </View>
+
+      {attendanceData.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <MaterialIcons name="event-busy" size={64} color="#9CA3AF" />
+          <Text variant="headlineSmall" style={styles.emptyTitle}>
+            No Attendance Records
+          </Text>
+          <Text variant="bodyMedium" style={styles.emptyText}>
+            No attendance records found for your account.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={attendanceData}
+          renderItem={renderAttendanceItem}
+          keyExtractor={(item, index) => (item.Id || index).toString()}
+          contentContainerStyle={styles.listContainer}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </View>
   );
 }
@@ -268,56 +217,38 @@ export default function AttendanceListScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
-    padding: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  content: {
-    width: '100%',
-    maxWidth: 400,
-    gap: 16,
-  },
-  title: {
-    textAlign: 'center',
-    color: '#374151',
-  },
-  welcome: {
-    textAlign: 'center',
-    color: '#6b7280',
+    backgroundColor: '#f8fafc',
   },
   loadingContainer: {
     flex: 1,
-    backgroundColor: 'white',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  loadingContent: {
-    alignItems: 'center',
-    gap: 16,
+    backgroundColor: '#f8fafc',
   },
   loadingText: {
+    marginTop: 16,
     color: '#6b7280',
   },
-  empty: {
-    backgroundColor: '#f3f4f6',
-    padding: 32,
-    borderRadius: 8,
-    alignItems: 'center',
+  header: {
+    padding: 20,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
   },
-  emptyText: {
-    color: '#6b7280',
+  title: {
+    fontWeight: 'bold',
+    color: '#1f2937',
+    marginBottom: 16,
+  },
+  segmentedButtons: {
     marginTop: 8,
   },
-  emptySubtext: {
-    color: '#9ca3af',
-    textAlign: 'center',
-    marginTop: 4,
+  listContainer: {
+    padding: 16,
   },
   item: {
-    backgroundColor: '#f9fafb',
-    padding: 16,
-    borderRadius: 8,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
     marginBottom: 12,
     elevation: 2,
     shadowColor: '#000',
@@ -326,45 +257,50 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
   },
   itemContent: {
-    gap: 8,
+    padding: 16,
   },
-  header: {
+  itemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    marginBottom: 12,
   },
   headerLeft: {
     flex: 1,
   },
+  date: {
+    fontWeight: '600',
+    color: '#1f2937',
+  },
   employeeName: {
     color: '#6b7280',
-    marginTop: 2,
-  },
-  date: {
-    color: '#374151',
+    marginTop: 4,
   },
   status: {
     fontWeight: 'bold',
+    textTransform: 'uppercase',
+    fontSize: 12,
   },
   times: {
-    flexDirection: 'row',
-    gap: 16,
+    marginBottom: 8,
   },
   timeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    marginBottom: 4,
   },
   timeText: {
-    color: '#6b7280',
+    marginLeft: 8,
+    color: '#4b5563',
   },
   location: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    marginBottom: 8,
   },
   locationText: {
-    color: '#9ca3af',
+    marginLeft: 8,
+    color: '#4b5563',
   },
   photoContainer: {
     marginTop: 8,
@@ -374,57 +310,29 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   photo: {
-    width: '100%',
-    height: 150,
+    width: 100,
+    height: 100,
     borderRadius: 8,
-    resizeMode: 'cover',
+    backgroundColor: '#f3f4f6',
   },
   notes: {
+    marginTop: 8,
     color: '#6b7280',
     fontStyle: 'italic',
   },
-  segmentedButtons: {
-    marginBottom: 16,
-  },
-  monthItem: {
-    backgroundColor: '#f9fafb',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  monthHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  monthTitle: {
-    color: '#374151',
-  },
-  percentage: {
-    color: '#16a34a',
-    fontWeight: 'bold',
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  stat: {
-    alignItems: 'center',
+  emptyContainer: {
     flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
   },
-  statNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
+  emptyTitle: {
     color: '#374151',
+    marginTop: 16,
+    marginBottom: 8,
   },
-  statLabel: {
+  emptyText: {
     color: '#6b7280',
-    fontSize: 12,
+    textAlign: 'center',
   },
 });

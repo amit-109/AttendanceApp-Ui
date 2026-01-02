@@ -140,7 +140,7 @@ export default function LeaveHistoryScreen() {
         ) : (
           <FlatList
             data={leaveData}
-            keyExtractor={(item) => item._id}
+            keyExtractor={(item, index) => (item._id || item.id || index).toString()}
             renderItem={renderLeaveItem}
             showsVerticalScrollIndicator={false}
             refreshing={loading}

@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
-import { ActivityIndicator, Button, Text, TextInput } from 'react-native-paper';
+import { Alert, StyleSheet, View, Image } from 'react-native';
+import { ActivityIndicator, Button, Modal, Portal, Text, TextInput } from 'react-native-paper';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const { login } = useAuth();
 
@@ -21,7 +24,6 @@ export default function LoginScreen() {
       const result = await login(email, password);
       if (result.success) {
         Alert.alert('Success', 'Login successful');
-        // Navigation will automatically switch to main screens due to auth state change
       } else {
         Alert.alert('Login Failed', result.error);
       }
@@ -32,12 +34,36 @@ export default function LoginScreen() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!forgotEmail) {
+      Alert.alert('Error', 'Please enter your email address');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      // TODO: Integrate with API later
+      Alert.alert('Success', 'Password reset instructions sent to your email');
+      setShowForgotPassword(false);
+      setForgotEmail('');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to send reset instructions');
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.card}>
         <View style={styles.content}>
+          <Image 
+            source={require('../../assets/images/SE_Logo_Rev1.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Text variant="headlineMedium" style={styles.title}>
-            Attendance Login
+            SecuryScope Attendance
           </Text>
 
           <TextInput
@@ -65,8 +91,62 @@ export default function LoginScreen() {
           >
             {loading ? <ActivityIndicator color="white" /> : 'LOGIN'}
           </Button>
+
+          <Button
+            mode="text"
+            onPress={() => setShowForgotPassword(true)}
+            style={styles.forgotButton}
+          >
+            Forgot Password?
+          </Button>
         </View>
       </View>
+
+      <Portal>
+        <Modal
+          visible={showForgotPassword}
+          onDismiss={() => setShowForgotPassword(false)}
+          contentContainerStyle={styles.modal}
+        >
+          <Text variant="headlineSmall" style={styles.modalTitle}>
+            Forgot Password
+          </Text>
+          <Text variant="bodyMedium" style={styles.modalDescription}>
+            Enter your email address and we'll send you instructions to reset your password.
+          </Text>
+
+          <TextInput
+            label="Email Address"
+            value={forgotEmail}
+            onChangeText={setForgotEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            style={styles.input}
+          />
+
+          <View style={styles.modalActions}>
+            <Button
+              mode="outlined"
+              onPress={() => {
+                setShowForgotPassword(false);
+                setForgotEmail('');
+              }}
+              style={styles.modalButton}
+            >
+              Cancel
+            </Button>
+            <Button
+              mode="contained"
+              onPress={handleForgotPassword}
+              loading={forgotLoading}
+              disabled={forgotLoading}
+              style={styles.modalButton}
+            >
+              Send Reset Link
+            </Button>
+          </View>
+        </Modal>
+      </Portal>
     </View>
   );
 }
@@ -94,20 +174,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
   },
+  logo: {
+    width: 80,
+    height: 80,
+    marginBottom: 8,
+  },
   title: {
     color: '#374151',
+    textAlign: 'center',
   },
   input: {
     width: '100%',
-    padding: 12,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    fontSize: 16,
-    color: '#000',
+    backgroundColor: 'white',
   },
   button: {
     width: '100%',
+  },
+  forgotButton: {
+    marginTop: 8,
+  },
+  modal: {
+    backgroundColor: 'white',
+    padding: 24,
+    margin: 20,
+    borderRadius: 12,
+  },
+  modalTitle: {
+    textAlign: 'center',
+    marginBottom: 16,
+    color: '#1f2937',
+  },
+  modalDescription: {
+    textAlign: 'center',
+    marginBottom: 24,
+    color: '#6b7280',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  modalButton: {
+    flex: 1,
   },
 });

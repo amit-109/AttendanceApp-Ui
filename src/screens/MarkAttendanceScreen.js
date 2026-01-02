@@ -14,21 +14,40 @@ export default function MarkAttendanceScreen({ navigation }) {
   const [photo, setPhoto] = useState(null);
   const [loading, setLoading] = useState(false);
   const [todayStatus, setTodayStatus] = useState(null);
+  const [attendanceDirection, setAttendanceDirection] = useState('IN');
   const cameraRef = useRef(null);
   const { user } = useAuth();
 
   useEffect(() => {
-    if (user) {
+    // Only load status if user is authenticated and has a token
+    if (user && user.id) {
       loadTodayStatus();
     }
   }, [user]);
 
   const loadTodayStatus = async () => {
     try {
-      const status = await apiService.getTodayStatus();
+      if (!user) return;
+      
+      const status = await apiService.getTodayAttendanceStatus();
       setTodayStatus(status);
+      
+      // Determine next action based on today's records
+      if (status) {
+        if (status.hasCheckedIn && !status.hasCheckedOut) {
+          setAttendanceDirection('OUT');
+        } else if (status.hasCheckedIn && status.hasCheckedOut) {
+          // Both check-in and check-out done
+          setAttendanceDirection(null);
+        } else {
+          setAttendanceDirection('IN');
+        }
+      } else {
+        setAttendanceDirection('IN');
+      }
     } catch (error) {
       console.error('Error loading today status:', error);
+      setAttendanceDirection('IN');
     }
   };
 
@@ -69,7 +88,7 @@ export default function MarkAttendanceScreen({ navigation }) {
     Alert.alert('Success', 'Location captured');
   };
 
-  const handleCheckIn = async () => {
+  const handleMarkAttendance = async () => {
     if (!photo) {
       Alert.alert('Photo Required', 'Please take a photo for attendance verification.');
       return;
@@ -77,39 +96,17 @@ export default function MarkAttendanceScreen({ navigation }) {
 
     setLoading(true);
     try {
-      // Convert photo to base64
-      let photoData = null;
-      if (photo) {
-        const response = await fetch(photo);
-        const blob = await response.blob();
-        photoData = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        });
-      }
-
-      const result = await apiService.checkIn(location, photoData);
-      Alert.alert('Success', 'Checked in successfully!');
-      setTodayStatus({ status: 'checked_in', attendance: result.attendance });
-      // Reset for next check-in
+      const result = await apiService.markAttendance(attendanceDirection, location, photo);
+      
+      const actionText = attendanceDirection === 'IN' ? 'Checked in' : 'Checked out';
+      Alert.alert('Success', `${actionText} successfully!`);
+      
+      // Update status and reset form
+      await loadTodayStatus();
       setPhoto(null);
       setLocation(null);
     } catch (error) {
-      Alert.alert('Check-in Failed', error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCheckOut = async () => {
-    setLoading(true);
-    try {
-      const result = await apiService.checkOut();
-      Alert.alert('Success', 'Checked out successfully!');
-      setTodayStatus({ status: 'checked_out', attendance: result.attendance });
-    } catch (error) {
-      Alert.alert('Check-out Failed', error.message);
+      Alert.alert('Attendance Failed', error.message);
     } finally {
       setLoading(false);
     }
@@ -154,7 +151,29 @@ export default function MarkAttendanceScreen({ navigation }) {
           Welcome, {user?.name}
         </Text>
 
-        {!todayStatus || todayStatus.status === 'not_checked_in' ? (
+        <View style={styles.statusCard}>
+          <Text variant="titleMedium" style={styles.statusTitle}>
+            Today's Status
+          </Text>
+          <Text variant="bodyMedium" style={styles.statusText}>
+            {todayStatus ? 
+              `Last action: ${todayStatus.direction} at ${new Date(todayStatus.created_at).toLocaleTimeString()}` : 
+              'No attendance marked today'
+            }
+          </Text>
+          {attendanceDirection && (
+            <Text variant="bodyLarge" style={styles.nextAction}>
+              Next Action: {attendanceDirection === 'IN' ? 'Check In' : 'Check Out'}
+            </Text>
+          )}
+          {!attendanceDirection && todayStatus && (
+            <Text variant="bodyLarge" style={styles.completedAction}>
+              Today's attendance completed ✓
+            </Text>
+          )}
+        </View>
+
+        {attendanceDirection ? (
           <>
             <Button
               mode="contained"
@@ -178,37 +197,27 @@ export default function MarkAttendanceScreen({ navigation }) {
 
             {photo && location && (
               <View style={styles.alert}>
-                <Text>Ready to check in! Photo and location captured.</Text>
+                <Text>Ready to {attendanceDirection === 'IN' ? 'check in' : 'check out'}! Photo and location captured.</Text>
               </View>
             )}
 
             <Button
               mode="contained"
-              onPress={handleCheckIn}
+              onPress={handleMarkAttendance}
               disabled={!photo || !location || loading}
-              style={styles.button}
+              style={[styles.button, attendanceDirection === 'OUT' ? styles.checkOutButton : styles.checkInButton]}
             >
-              {loading ? <ActivityIndicator color="white" /> : 'CHECK IN'}
-            </Button>
-          </>
-        ) : todayStatus.status === 'checked_in' ? (
-          <>
-            <View style={styles.alert}>
-              <Text>You are currently checked in. Ready to check out?</Text>
-            </View>
-
-            <Button
-              mode="contained"
-              onPress={handleCheckOut}
-              disabled={loading}
-              style={styles.button}
-            >
-              {loading ? <ActivityIndicator color="white" /> : 'CHECK OUT'}
+              {loading ? <ActivityIndicator color="white" /> : 
+                attendanceDirection === 'IN' ? 'CHECK IN' : 'CHECK OUT'
+              }
             </Button>
           </>
         ) : (
-          <View style={styles.alert}>
-            <Text>You have completed today's attendance!</Text>
+          <View style={styles.completedCard}>
+            <MaterialIcons name="check-circle" size={48} color="#059669" />
+            <Text variant="titleMedium" style={styles.completedText}>
+              You have completed today's attendance!
+            </Text>
           </View>
         )}
 
@@ -253,6 +262,51 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: '#d1fae5',
     borderRadius: 8,
+  },
+  statusCard: {
+    width: '100%',
+    padding: 16,
+    backgroundColor: '#f8fafc',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  statusTitle: {
+    fontWeight: 'bold',
+    marginBottom: 8,
+    color: '#374151',
+  },
+  statusText: {
+    color: '#6b7280',
+    marginBottom: 4,
+  },
+  nextAction: {
+    fontWeight: 'bold',
+    color: '#059669',
+  },
+  completedAction: {
+    fontWeight: 'bold',
+    color: '#059669',
+  },
+  completedCard: {
+    width: '100%',
+    padding: 24,
+    backgroundColor: '#f0fdf4',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
+    alignItems: 'center',
+    gap: 12,
+  },
+  completedText: {
+    color: '#059669',
+    textAlign: 'center',
+  },
+  checkInButton: {
+    backgroundColor: '#059669',
+  },
+  checkOutButton: {
+    backgroundColor: '#dc2626',
   },
   cameraContainer: {
     flex: 1,
