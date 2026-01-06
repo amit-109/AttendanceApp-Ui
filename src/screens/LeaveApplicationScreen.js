@@ -1,39 +1,75 @@
-import { useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
-import { Button, Text, TextInput } from 'react-native-paper';
+import { useState, useEffect } from 'react';
+import { Alert, ScrollView, StyleSheet, View, Platform } from 'react-native';
+import { Button, Text, TextInput, Chip } from 'react-native-paper';
+import { Picker } from '@react-native-picker/picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
 
 export default function LeaveApplicationScreen({ navigation }) {
-  const [leaveType, setLeaveType] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [reason, setReason] = useState('');
+  const [leaveTypes, setLeaveTypes] = useState([]);
+  const [selectedLeaveType, setSelectedLeaveType] = useState('');
+  const [dateFrom, setDateFrom] = useState(new Date());
+  const [dateTo, setDateTo] = useState(new Date());
+  const [leaveReason, setLeaveReason] = useState('');
   const [loading, setLoading] = useState(false);
+  const [typesLoading, setTypesLoading] = useState(true);
+  const [showFromDatePicker, setShowFromDatePicker] = useState(false);
+  const [showToDatePicker, setShowToDatePicker] = useState(false);
   const { user } = useAuth();
 
-  const leaveTypes = [
-    { label: 'Sick Leave', value: 'sick' },
-    { label: 'Casual Leave', value: 'casual' },
-    { label: 'Annual Leave', value: 'annual' },
-    { label: 'Maternity Leave', value: 'maternity' },
-    { label: 'Paternity Leave', value: 'paternity' },
-    { label: 'Other', value: 'other' },
-  ];
+  useEffect(() => {
+    loadLeaveTypes();
+  }, []);
+
+  const loadLeaveTypes = async () => {
+    try {
+      const types = await apiService.getLeaveTypes();
+      setLeaveTypes(types);
+    } catch (error) {
+      console.error('Error loading leave types:', error);
+    } finally {
+      setTypesLoading(false);
+    }
+  };
+
+  const formatDate = (date) => {
+    return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+  };
+
+  const onFromDateChange = (event, selectedDate) => {
+    const currentDate = selectedDate || dateFrom;
+    setShowFromDatePicker(Platform.OS === 'ios');
+    setDateFrom(currentDate);
+  };
+
+  const onToDateChange = (event, selectedDate) => {
+    const currentDate = selectedDate || dateTo;
+    setShowToDatePicker(Platform.OS === 'ios');
+    setDateTo(currentDate);
+  };
+
+  const showFromDatePickerModal = () => {
+    setShowFromDatePicker(true);
+  };
+
+  const showToDatePickerModal = () => {
+    setShowToDatePicker(true);
+  };
 
   const handleSubmit = async () => {
-    if (!leaveType || !startDate || !endDate || !reason) {
+    if (!selectedLeaveType || !dateFrom || !dateTo || !leaveReason) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
 
-    if (reason.length < 10) {
+    if (leaveReason.length < 10) {
       Alert.alert('Error', 'Please provide a detailed reason (minimum 10 characters)');
       return;
     }
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
+    const start = new Date(dateFrom);
+    const end = new Date(dateTo);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
@@ -50,20 +86,20 @@ export default function LeaveApplicationScreen({ navigation }) {
     setLoading(true);
     try {
       await apiService.applyForLeave({
-        leaveType,
-        startDate,
-        endDate,
-        reason,
+        leave_type_id: parseInt(selectedLeaveType),
+        date_from: dateFrom,
+        date_to: dateTo,
+        leave_reason: leaveReason,
       });
 
       Alert.alert('Success', 'Leave application submitted successfully', [
         {
           text: 'OK',
           onPress: () => {
-            setLeaveType('');
-            setStartDate('');
-            setEndDate('');
-            setReason('');
+            setSelectedLeaveType('');
+            setDateFrom('');
+            setDateTo('');
+            setLeaveReason('');
             navigation.goBack();
           },
         },
@@ -91,39 +127,84 @@ export default function LeaveApplicationScreen({ navigation }) {
             Leave Details
           </Text>
 
-          <View style={styles.leaveTypeContainer}>
-            {leaveTypes.map((type) => (
-              <Button
-                key={type.value}
-                mode={leaveType === type.value ? 'contained' : 'outlined'}
-                onPress={() => setLeaveType(type.value)}
-                style={styles.leaveTypeButton}
-              >
-                {type.label}
-              </Button>
-            ))}
+          {typesLoading ? (
+            <Text variant="bodyMedium" style={{ textAlign: 'center', marginBottom: 16 }}>
+              Loading leave types...
+            </Text>
+          ) : (
+            <View style={styles.pickerSection}>
+              <Text variant="titleSmall" style={styles.fieldLabel}>
+                Leave Type *
+              </Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedLeaveType}
+                  onValueChange={(itemValue) => setSelectedLeaveType(itemValue)}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Select a leave type..." value="" />
+                  {leaveTypes.map((type) => (
+                    <Picker.Item
+                      key={type.Id || type.id}
+                      label={type.LeaveType || type.leave_type}
+                      value={(type.Id || type.id)?.toString()}
+                    />
+                  ))}
+                </Picker>
+              </View>
+            </View>
+          )}
+
+          <View style={styles.dateSection}>
+            <Text variant="titleSmall" style={styles.fieldLabel}>
+              From Date *
+            </Text>
+            <Button
+              mode="outlined"
+              onPress={showFromDatePickerModal}
+              style={styles.dateButton}
+            >
+              {formatDate(dateFrom)}
+            </Button>
           </View>
 
-          <TextInput
-            label="Start Date (YYYY-MM-DD)"
-            value={startDate}
-            onChangeText={setStartDate}
-            placeholder="2024-12-26"
-            style={styles.input}
-          />
+          <View style={styles.dateSection}>
+            <Text variant="titleSmall" style={styles.fieldLabel}>
+              To Date *
+            </Text>
+            <Button
+              mode="outlined"
+              onPress={showToDatePickerModal}
+              style={styles.dateButton}
+            >
+              {formatDate(dateTo)}
+            </Button>
+          </View>
 
-          <TextInput
-            label="End Date (YYYY-MM-DD)"
-            value={endDate}
-            onChangeText={setEndDate}
-            placeholder="2024-12-27"
-            style={styles.input}
-          />
+          {showFromDatePicker && (
+            <DateTimePicker
+              value={dateFrom}
+              mode="date"
+              display="default"
+              onChange={onFromDateChange}
+              minimumDate={new Date()}
+            />
+          )}
+
+          {showToDatePicker && (
+            <DateTimePicker
+              value={dateTo}
+              mode="date"
+              display="default"
+              onChange={onToDateChange}
+              minimumDate={dateFrom}
+            />
+          )}
 
           <TextInput
             label="Reason for Leave"
-            value={reason}
-            onChangeText={setReason}
+            value={leaveReason}
+            onChangeText={setLeaveReason}
             multiline
             numberOfLines={4}
             style={[styles.input, styles.textArea]}
@@ -176,15 +257,59 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     color: '#374151',
   },
+  leaveTypeSection: {
+    marginBottom: 16,
+  },
+  fieldLabel: {
+    fontWeight: 'bold',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  helperText: {
+    color: '#6b7280',
+    marginBottom: 8,
+  },
   leaveTypeContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 16,
+  },
+  leaveTypeChip: {
+    marginBottom: 4,
+  },
+  selectedChip: {
+    backgroundColor: '#1976d2',
+  },
+  selectedChipText: {
+    color: 'white',
+  },
+  noTypesText: {
+    textAlign: 'center',
+    color: '#9ca3af',
+    fontStyle: 'italic',
   },
   leaveTypeButton: {
     flex: 1,
     minWidth: 100,
+  },
+  pickerSection: {
+    marginBottom: 16,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    borderRadius: 4,
+    backgroundColor: '#f9fafb',
+  },
+  picker: {
+    height: 50,
+    color: '#374151',
+  },
+  dateSection: {
+    marginBottom: 16,
+  },
+  dateButton: {
+    justifyContent: 'flex-start',
   },
   input: {
     marginBottom: 16,

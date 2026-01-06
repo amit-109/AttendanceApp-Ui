@@ -1,7 +1,10 @@
 import { MaterialIcons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Alert, FlatList, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, StyleSheet, View, Platform } from 'react-native';
 import { ActivityIndicator, Button, Card, Chip, FAB, Modal, Portal, SegmentedButtons, Text, TextInput } from 'react-native-paper';
+import { Picker } from '@react-native-picker/picker';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import Toast from 'react-native-toast-message';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
 
@@ -15,9 +18,11 @@ export default function LeaveManagementScreen() {
   
   // Form state
   const [selectedLeaveType, setSelectedLeaveType] = useState('');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  const [dateFrom, setDateFrom] = useState(new Date());
+  const [dateTo, setDateTo] = useState(new Date());
   const [leaveReason, setLeaveReason] = useState('');
+  const [showFromDatePicker, setShowFromDatePicker] = useState(false);
+  const [showToDatePicker, setShowToDatePicker] = useState(false);
 
   const { user } = useAuth();
 
@@ -36,19 +41,55 @@ export default function LeaveManagementScreen() {
         setLoading(false);
         return;
       }
-      
+
       setLoading(true);
-      const [leavesData, typesData] = await Promise.all([
-        apiService.getAttendanceHistory(), // This will include leave data
-        apiService.getLeaveTypes()
-      ]);
-      
-      setLeaves(Array.isArray(leavesData) ? leavesData : []);
-      setLeaveTypes(Array.isArray(typesData) ? typesData : []);
+
+      // Load leave types first (this should work for all authenticated users)
+      const typesData = await apiService.getLeaveTypes();
+      console.log('Loaded leave types:', typesData);
+      const activeTypes = Array.isArray(typesData) ? typesData.filter(type => type.IsActive === 1) : [];
+      console.log('Filtered active leave types:', activeTypes);
+      setLeaveTypes(activeTypes);
+
+      // Load leave history for both admins and employees
+      try {
+        const leavesData = await apiService.getLeaveHistory();
+        console.log('Loaded leave applications:', leavesData);
+
+        // Handle leave data based on user role
+        let userLeaves = [];
+        if (Array.isArray(leavesData)) {
+          if (user.role === 1) {
+            // Admin sees all leaves
+            userLeaves = leavesData;
+          } else {
+            // Employee sees only their own leaves (should be filtered by backend)
+            userLeaves = leavesData;
+          }
+        }
+        setLeaves(userLeaves);
+      } catch (leaveError) {
+        console.error('Error loading leave history:', leaveError);
+        // If leave history fails to load, show empty list
+        setLeaves([]);
+      }
+
     } catch (error) {
       console.error('Error loading leave data:', error);
-      if (user) {
-        Alert.alert('Error', 'Failed to load leave data');
+      // Handle general errors (like leave types failing)
+      if (error.message?.includes('Unauthorized') || error.message?.includes('401')) {
+        console.log('Authentication token invalid - redirecting to login');
+        // Token is invalid, user needs to login again
+        Alert.alert('Session Expired', 'Please login again', [
+          {
+            text: 'OK',
+            onPress: () => {
+              // This will be handled by navigation logic
+            },
+          },
+        ]);
+      } else {
+        Alert.alert('Error', 'Failed to load data. Please check your connection.');
       }
     } finally {
       setLoading(false);
@@ -56,26 +97,107 @@ export default function LeaveManagementScreen() {
   };
 
   const handleApplyLeave = async () => {
-    if (!selectedLeaveType || !dateFrom || !dateTo || !leaveReason) {
-      Alert.alert('Error', 'Please fill all required fields');
-      return;
-    }
-
-    setApplyLoading(true);
     try {
-      await apiService.applyForLeave({
-        leave_type_id: parseInt(selectedLeaveType),
-        date_from: dateFrom,
-        date_to: dateTo,
-        leave_reason: leaveReason
+      if (!selectedLeaveType || !dateFrom || !dateTo || !leaveReason) {
+        Toast.show({
+          type: 'error',
+          text1: 'Missing Information',
+          text2: 'Please fill all required fields',
+        });
+        return;
+      }
+
+      if (leaveReason.length < 5) {
+        Toast.show({
+          type: 'error',
+          text1: 'Reason Too Short',
+          text2: 'Reason must be at least 5 characters',
+        });
+        return;
+      }
+
+      // Ensure dates are Date objects
+      const start = dateFrom instanceof Date ? dateFrom : new Date(dateFrom);
+      const end = dateTo instanceof Date ? dateTo : new Date(dateTo);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      console.log('Date validation:', {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        today: today.toISOString()
       });
 
-      Alert.alert('Success', 'Leave application submitted successfully');
+      if (start < today) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid Date',
+          text2: 'Start date cannot be in the past',
+        });
+        return;
+      }
+
+      // Special validation for Earn Leave - must apply 48 hours in advance
+      const selectedType = leaveTypes.find(type => (type.Id || type.id)?.toString() === selectedLeaveType);
+      if (selectedType && (selectedType.LeaveType || selectedType.leave_type)?.toLowerCase().includes('earn')) {
+        const twoDaysFromNow = new Date();
+        twoDaysFromNow.setDate(twoDaysFromNow.getDate() + 2);
+        twoDaysFromNow.setHours(0, 0, 0, 0);
+
+        if (start < twoDaysFromNow) {
+          Toast.show({
+            type: 'error',
+            text1: 'Advance Notice Required',
+            text2: 'Earn Leave must be applied at least 48 hours in advance',
+          });
+          return;
+        }
+      }
+
+      if (end < start) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid Date Range',
+          text2: 'End date must be after start date',
+        });
+        return;
+      }
+
+      const formattedData = {
+        leave_type_id: parseInt(selectedLeaveType),
+        date_from: formatISODate(start),
+        date_to: formatISODate(end),
+        leave_reason: leaveReason.trim()
+      };
+
+      console.log('Submitting leave application:', formattedData);
+
+      setApplyLoading(true);
+
+      await apiService.applyForLeave(formattedData);
+
+      Toast.show({
+        type: 'success',
+        text1: 'Leave Application Submitted',
+        text2: 'Your leave request has been sent for approval',
+      });
+
       setShowApplyModal(false);
       resetForm();
+      // Reload data after successful submission
       loadData();
     } catch (error) {
-      Alert.alert('Error', error.message || 'Failed to apply for leave');
+      console.error('Leave application error:', error);
+      const errorMessage = error.response?.data?.error ||
+                          error.response?.data?.message ||
+                          error.message ||
+                          'Failed to apply for leave';
+
+      Toast.show({
+        type: 'error',
+        text1: 'Application Failed',
+        text2: errorMessage,
+      });
     } finally {
       setApplyLoading(false);
     }
@@ -83,8 +205,8 @@ export default function LeaveManagementScreen() {
 
   const resetForm = () => {
     setSelectedLeaveType('');
-    setDateFrom('');
-    setDateTo('');
+    setDateFrom(new Date());
+    setDateTo(new Date());
     setLeaveReason('');
   };
 
@@ -94,6 +216,30 @@ export default function LeaveManagementScreen() {
       month: 'short',
       day: 'numeric'
     });
+  };
+
+  const formatISODate = (date) => {
+    return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+  };
+
+  const onFromDateChange = (event, selectedDate) => {
+    const currentDate = selectedDate || dateFrom;
+    setShowFromDatePicker(Platform.OS === 'ios');
+    setDateFrom(currentDate);
+  };
+
+  const onToDateChange = (event, selectedDate) => {
+    const currentDate = selectedDate || dateTo;
+    setShowToDatePicker(Platform.OS === 'ios');
+    setDateTo(currentDate);
+  };
+
+  const showFromDatePickerModal = () => {
+    setShowFromDatePicker(true);
+  };
+
+  const showToDatePickerModal = () => {
+    setShowToDatePicker(true);
   };
 
   const getStatusColor = (status) => {
@@ -114,25 +260,29 @@ export default function LeaveManagementScreen() {
       <Card.Content>
         <View style={styles.leaveHeader}>
           <View style={styles.leaveInfo}>
-            <Text variant="titleMedium">{item.leave_type || 'Leave'}</Text>
+            <Text variant="titleMedium">{item.LeaveType || item.leave_type || 'Leave'}</Text>
             <Text variant="bodySmall" style={styles.dateRange}>
-              {formatDate(item.date_from)} - {formatDate(item.date_to)}
+              {formatDate(item.DateFrom || item.date_from)} - {formatDate(item.DateTo || item.date_to)}
             </Text>
           </View>
-          <Chip 
-            mode="outlined" 
-            textStyle={{ color: getStatusColor(item.status) }}
-            style={{ borderColor: getStatusColor(item.status) }}
+          <Chip
+            mode="outlined"
+            textStyle={{ color: getStatusColor(item.ApprovalStatus || item.status) }}
+            style={{ borderColor: getStatusColor(item.ApprovalStatus || item.status) }}
           >
-            {item.status || 'Pending'}
+            {item.ApprovalStatus || item.status || 'Applied'}
           </Chip>
         </View>
 
-        {item.leave_reason && (
+        {item.LeaveReason && (
           <Text variant="bodyMedium" style={styles.reason}>
-            Reason: {item.leave_reason}
+            Reason: {item.LeaveReason}
           </Text>
         )}
+
+        <Text variant="bodySmall" style={styles.appliedDate}>
+          Applied: {formatDate(item.DateCreated || item.created_at)}
+        </Text>
       </Card.Content>
     </Card>
   );
@@ -173,6 +323,11 @@ export default function LeaveManagementScreen() {
           refreshing={loading}
           onRefresh={loadData}
           contentContainerStyle={styles.listContainer}
+          ListHeaderComponent={
+            <Text variant="bodySmall" style={styles.refreshHint}>
+              Pull down to refresh leave status
+            </Text>
+          }
         />
       )}
 
@@ -193,38 +348,78 @@ export default function LeaveManagementScreen() {
           </Text>
 
           <View style={styles.formContainer}>
-            <Text variant="bodyMedium" style={styles.fieldLabel}>
-              Leave Type *
-            </Text>
-            <View style={styles.leaveTypeContainer}>
-              {leaveTypes.map((type, index) => (
-                <Chip
-                  key={type.id || index}
-                  mode={selectedLeaveType === (type.id || index).toString() ? 'flat' : 'outlined'}
-                  selected={selectedLeaveType === (type.id || index).toString()}
-                  onPress={() => setSelectedLeaveType((type.id || index).toString())}
-                  style={styles.leaveTypeChip}
+            <View style={styles.pickerSection}>
+              <Text variant="titleSmall" style={styles.fieldLabel}>
+                Leave Type * ({leaveTypes.length} types loaded)
+              </Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={selectedLeaveType}
+                  onValueChange={(itemValue) => setSelectedLeaveType(itemValue)}
+                  style={styles.picker}
                 >
-                  {type.leave_type}
-                </Chip>
-              ))}
+                  <Picker.Item label="Select a leave type..." value="" />
+                  {leaveTypes.map((type) => (
+                    <Picker.Item
+                      key={type.Id || type.id}
+                      label={type.LeaveType || type.leave_type}
+                      value={(type.Id || type.id)?.toString()}
+                    />
+                  ))}
+                </Picker>
+              </View>
+              {leaveTypes.length === 0 && (
+                <Text variant="bodySmall" style={{ color: 'red', marginTop: 4 }}>
+                  No leave types available. Check console for API errors.
+                </Text>
+              )}
             </View>
 
-            <TextInput
-              label="From Date (YYYY-MM-DD) *"
-              value={dateFrom}
-              onChangeText={setDateFrom}
-              placeholder="2024-01-15"
-              style={styles.input}
-            />
+            <View style={styles.dateSection}>
+              <Text variant="titleSmall" style={styles.fieldLabel}>
+                From Date *
+              </Text>
+              <Button
+                mode="outlined"
+                onPress={showFromDatePickerModal}
+                style={styles.dateButton}
+              >
+                {formatISODate(dateFrom)}
+              </Button>
+            </View>
 
-            <TextInput
-              label="To Date (YYYY-MM-DD) *"
-              value={dateTo}
-              onChangeText={setDateTo}
-              placeholder="2024-01-17"
-              style={styles.input}
-            />
+            <View style={styles.dateSection}>
+              <Text variant="titleSmall" style={styles.fieldLabel}>
+                To Date *
+              </Text>
+              <Button
+                mode="outlined"
+                onPress={showToDatePickerModal}
+                style={styles.dateButton}
+              >
+                {formatISODate(dateTo)}
+              </Button>
+            </View>
+
+            {showFromDatePicker && (
+              <DateTimePicker
+                value={dateFrom}
+                mode="date"
+                display="default"
+                onChange={onFromDateChange}
+                minimumDate={new Date()}
+              />
+            )}
+
+            {showToDatePicker && (
+              <DateTimePicker
+                value={dateTo}
+                mode="date"
+                display="default"
+                onChange={onToDateChange}
+                minimumDate={dateFrom}
+              />
+            )}
 
             <TextInput
               label="Reason *"
@@ -233,6 +428,18 @@ export default function LeaveManagementScreen() {
               multiline
               numberOfLines={3}
               style={styles.input}
+              theme={{
+                colors: {
+                  primary: '#1976d2',
+                  text: '#374151',
+                  placeholder: '#9ca3af',
+                  background: '#ffffff',
+                }
+              }}
+              contentStyle={{
+                color: '#374151',
+                backgroundColor: '#ffffff',
+              }}
             />
 
             <View style={styles.modalActions}>
@@ -266,13 +473,15 @@ export default function LeaveManagementScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: 'white',
+    backgroundColor: '#f8fafc',
     padding: 16,
   },
   title: {
     textAlign: 'center',
-    marginBottom: 16,
-    color: '#374151',
+    marginBottom: 24,
+    color: '#1e293b',
+    fontSize: 24,
+    fontWeight: '700',
   },
   segmentedButtons: {
     marginBottom: 16,
@@ -282,9 +491,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: 16,
+    backgroundColor: '#f8fafc',
   },
   loadingText: {
-    color: '#6b7280',
+    color: '#64748b',
+    fontSize: 16,
   },
   empty: {
     flex: 1,
@@ -293,21 +504,28 @@ const styles = StyleSheet.create({
     padding: 32,
   },
   emptyText: {
-    color: '#6b7280',
+    color: '#475569',
     marginTop: 16,
     textAlign: 'center',
+    fontSize: 18,
+    fontWeight: '600',
   },
   emptySubtext: {
-    color: '#9ca3af',
+    color: '#64748b',
     textAlign: 'center',
     marginTop: 8,
+    fontSize: 14,
   },
   listContainer: {
     paddingBottom: 80,
   },
   leaveCard: {
-    marginBottom: 12,
-    elevation: 2,
+    marginBottom: 16,
+    elevation: 4,
+    borderRadius: 12,
+    backgroundColor: 'white',
+    borderLeftWidth: 4,
+    borderLeftColor: '#667eea',
   },
   leaveHeader: {
     flexDirection: 'row',
@@ -320,17 +538,23 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   dateRange: {
-    color: '#6b7280',
+    color: '#64748b',
     marginTop: 4,
+    fontSize: 14,
   },
   employeeName: {
-    color: '#9ca3af',
+    color: '#64748b',
     marginTop: 4,
+    fontSize: 12,
   },
   reason: {
     color: '#374151',
     marginTop: 8,
     fontStyle: 'italic',
+    backgroundColor: '#f8fafc',
+    padding: 8,
+    borderRadius: 6,
+    fontSize: 14,
   },
   actionButtons: {
     flexDirection: 'row',
@@ -345,25 +569,32 @@ const styles = StyleSheet.create({
     margin: 16,
     right: 0,
     bottom: 0,
+    backgroundColor: '#667eea',
+    borderRadius: 16,
+    elevation: 8,
   },
   modal: {
     backgroundColor: 'white',
     padding: 24,
     margin: 20,
-    borderRadius: 8,
+    borderRadius: 16,
     maxHeight: '80%',
+    elevation: 8,
   },
   modalTitle: {
     textAlign: 'center',
     marginBottom: 24,
-    color: '#374151',
+    color: '#1e293b',
+    fontSize: 20,
+    fontWeight: '700',
   },
   formContainer: {
-    gap: 16,
+    gap: 20,
   },
   fieldLabel: {
-    fontWeight: 'bold',
+    fontWeight: '600',
     color: '#374151',
+    fontSize: 16,
   },
   leaveTypeContainer: {
     flexDirection: 'row',
@@ -375,13 +606,51 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: 'white',
+    borderRadius: 8,
   },
   modalActions: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 16,
+    marginTop: 24,
   },
   modalButton: {
     flex: 1,
+    borderRadius: 8,
+    height: 48,
+  },
+  pickerSection: {
+    marginBottom: 16,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+    elevation: 1,
+  },
+  picker: {
+    height: 56,
+    color: '#374151',
+    fontSize: 16,
+  },
+  dateSection: {
+    marginBottom: 16,
+  },
+  dateButton: {
+    justifyContent: 'flex-start',
+    borderRadius: 8,
+    backgroundColor: '#f8fafc',
+  },
+  refreshHint: {
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 12,
+    fontSize: 14,
+    fontWeight: '500',
+    backgroundColor: '#e0f2fe',
+    padding: 8,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#667eea',
   },
 });

@@ -15,9 +15,9 @@ const Tab = createBottomTabNavigator();
 function TabNavigator() {
   const LogoTitle = () => (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <Image 
+      <Image
         source={require('../../assets/images/SE_Logo_Rev1.png')}
-        style={{ width: 24, height: 24, marginRight: 8, tintColor: 'white' }}
+        style={{ width: 32, height: 32, marginRight: 8 }}
         resizeMode="contain"
       />
       <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>SecuryScope</Text>

@@ -36,11 +36,12 @@ export default function LeaveHistoryScreen() {
   };
 
   const getStatusColor = (status) => {
-    switch (status) {
+    switch (status?.toLowerCase()) {
       case 'approved':
         return '#16a34a';
       case 'rejected':
         return '#dc2626';
+      case 'applied':
       case 'pending':
         return '#ea580c';
       default:
@@ -49,25 +50,18 @@ export default function LeaveHistoryScreen() {
   };
 
   const getLeaveTypeLabel = (type) => {
-    const types = {
-      sick: 'Sick Leave',
-      casual: 'Casual Leave',
-      annual: 'Annual Leave',
-      maternity: 'Maternity Leave',
-      paternity: 'Paternity Leave',
-      other: 'Other',
-    };
-    return types[type] || type;
+    // Backend returns leave type name directly
+    return type || 'Leave';
   };
 
   const renderLeaveItem = ({ item }) => (
     <View style={styles.item}>
       <View style={styles.itemHeader}>
         <Text variant="titleMedium" style={styles.leaveType}>
-          {getLeaveTypeLabel(item.leaveType)}
+          {getLeaveTypeLabel(item.LeaveType)}
         </Text>
-        <Text variant="labelSmall" style={[styles.status, { color: getStatusColor(item.status) }]}>
-          {item.status.toUpperCase()}
+        <Text variant="labelSmall" style={[styles.status, { color: getStatusColor(item.ApprovalStatus) }]}>
+          {item.ApprovalStatus?.toUpperCase()}
         </Text>
       </View>
 
@@ -75,32 +69,32 @@ export default function LeaveHistoryScreen() {
         <View style={styles.dateItem}>
           <MaterialIcons name="date-range" size={16} color="#6b7280" />
           <Text variant="bodySmall" style={styles.dateText}>
-            From: {formatDate(item.startDate)}
+            From: {formatDate(item.DateFrom)}
           </Text>
         </View>
         <View style={styles.dateItem}>
           <MaterialIcons name="date-range" size={16} color="#6b7280" />
           <Text variant="bodySmall" style={styles.dateText}>
-            To: {formatDate(item.endDate)}
+            To: {formatDate(item.DateTo)}
           </Text>
         </View>
       </View>
 
       <Text variant="bodyMedium" style={styles.reason}>
-        {item.reason}
+        {item.LeaveReason}
       </Text>
 
-      {item.comments && (
+      {item.Comments && (
         <View style={styles.commentsContainer}>
           <MaterialIcons name="comment" size={16} color="#6b7280" />
           <Text variant="bodySmall" style={styles.comments}>
-            {item.comments}
+            {item.Comments}
           </Text>
         </View>
       )}
 
       <Text variant="bodySmall" style={styles.appliedDate}>
-        Applied on: {formatDate(item.createdAt)}
+        Applied on: {formatDate(item.DateCreated)}
       </Text>
     </View>
   );

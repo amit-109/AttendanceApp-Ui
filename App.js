@@ -1,6 +1,7 @@
 import { NavigationContainer } from '@react-navigation/native';
 import { AppRegistry, LogBox } from 'react-native';
 import { PaperProvider } from 'react-native-paper';
+import Toast from 'react-native-toast-message';
 import { AuthProvider } from './src/contexts/AuthContext';
 import AppNavigator from './src/navigation/AppNavigator';
 
@@ -15,6 +16,7 @@ function App() {
       <AuthProvider>
         <NavigationContainer>
           <AppNavigator />
+          <Toast />
         </NavigationContainer>
       </AuthProvider>
     </PaperProvider>

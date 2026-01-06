@@ -9,10 +9,12 @@ import apiService from '../services/api';
 
 export default function MarkAttendanceScreen({ navigation }) {
   const [location, setLocation] = useState(null);
-  const [hasPermission, setHasPermission] = useState(null);
+  const [hasCameraPermission, setHasCameraPermission] = useState(null);
+  const [hasLocationPermission, setHasLocationPermission] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
   const [photo, setPhoto] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
   const [todayStatus, setTodayStatus] = useState(null);
   const [attendanceDirection, setAttendanceDirection] = useState('IN');
   const cameraRef = useRef(null);
@@ -22,8 +24,23 @@ export default function MarkAttendanceScreen({ navigation }) {
     // Only load status if user is authenticated and has a token
     if (user && user.id) {
       loadTodayStatus();
+      requestPermissions();
     }
   }, [user]);
+
+  const requestPermissions = async () => {
+    try {
+      // Request camera permission
+      const { status: cameraStatus } = await Camera.requestCameraPermissionsAsync();
+      setHasCameraPermission(cameraStatus === 'granted');
+
+      // Request location permission
+      const { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
+      setHasLocationPermission(locationStatus === 'granted');
+    } catch (error) {
+      console.error('Error requesting permissions:', error);
+    }
+  };
 
   const loadTodayStatus = async () => {
     try {
@@ -51,64 +68,120 @@ export default function MarkAttendanceScreen({ navigation }) {
     }
   };
 
-  const requestCameraPermission = async () => {
-    const { status } = await Camera.requestCameraPermissionsAsync();
-    setHasPermission(status === 'granted');
-    if (status === 'granted') {
-      setShowCamera(true);
-    } else {
-      Alert.alert('Camera permission required', 'Please enable camera permission to take attendance photos.');
-    }
-  };
 
-  const takePhoto = async () => {
-    if (cameraRef.current) {
-      try {
-        const photoData = await cameraRef.current.takePictureAsync({
-          quality: 0.5,
-          base64: false,
-        });
-        setPhoto(photoData.uri);
-        setShowCamera(false);
-        Alert.alert('Success', 'Photo captured successfully');
-      } catch (error) {
-        Alert.alert('Error', 'Failed to capture photo');
+
+  const takePhotoAndLocation = async () => {
+    try {
+      // Step 1: Check camera permission
+      if (!hasCameraPermission) {
+        const { status } = await Camera.requestCameraPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Required', 'Camera permission is required to take attendance photos.');
+          return null;
+        }
+        setHasCameraPermission(true);
       }
-    }
-  };
 
-  const getLocation = async () => {
-    let { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Location permission required', 'Please enable location permission for attendance tracking.');
-      return;
+      // Step 2: Take photo automatically
+      setShowCamera(true);
+
+      // Wait for camera to initialize
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      if (!cameraRef.current) {
+        console.error('Camera not available');
+        setShowCamera(false);
+        Alert.alert('Error', 'Camera not ready. Please try again.');
+        return null;
+      }
+
+      const photoData = await cameraRef.current.takePictureAsync({
+        quality: 0.7,
+        base64: false,
+      });
+
+      setShowCamera(false);
+
+      // Step 3: Check location permission
+      if (!hasLocationPermission) {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          Alert.alert('Permission Required', 'Location permission is required to mark attendance.');
+          return null;
+        }
+        setHasLocationPermission(true);
+      }
+
+      // Step 4: Get location
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        timeout: 10000,
+      });
+
+      // Return the captured data directly
+      return {
+        photoUri: photoData.uri,
+        locationCoords: loc.coords
+      };
+    } catch (error) {
+      console.error('Capture failed:', error);
+      setShowCamera(false);
+      Alert.alert('Capture Failed', `Failed to capture photo or location: ${error.message}. Please try again.`);
+      return null;
     }
-    let loc = await Location.getCurrentPositionAsync({});
-    setLocation(loc.coords);
-    Alert.alert('Success', 'Location captured');
   };
 
   const handleMarkAttendance = async () => {
-    if (!photo) {
-      Alert.alert('Photo Required', 'Please take a photo for attendance verification.');
-      return;
-    }
-
     setLoading(true);
+    setLoadingMessage('Initializing...');
+
     try {
-      const result = await apiService.markAttendance(attendanceDirection, location, photo);
-      
+      // Automatically take photo and get location
+      setLoadingMessage('Capturing photo and location...');
+      const capturedData = await takePhotoAndLocation();
+
+      if (!capturedData) {
+        setLoading(false);
+        setLoadingMessage('');
+        return;
+      }
+
+      const { photoUri, locationCoords } = capturedData;
+
+      // Validate data
+      setLoadingMessage('Validating data...');
+      if (!photoUri || !locationCoords) {
+        Alert.alert('Validation Error', 'Photo or location data is missing. Please try again.');
+        setLoading(false);
+        setLoadingMessage('');
+        return;
+      }
+
+      // Mark attendance
+      setLoadingMessage('Marking attendance...');
+      const result = await apiService.markAttendance(attendanceDirection, locationCoords, photoUri);
+
       const actionText = attendanceDirection === 'IN' ? 'Checked in' : 'Checked out';
-      Alert.alert('Success', `${actionText} successfully!`);
-      
-      // Update status and reset form
+
+      // Success feedback
+      setLoadingMessage('Success!');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      Alert.alert(
+        '✅ Attendance Marked',
+        `${actionText} successfully at ${new Date().toLocaleTimeString()}!`,
+        [{ text: 'OK' }]
+      );
+
+      // Update status
       await loadTodayStatus();
-      setPhoto(null);
-      setLocation(null);
+
     } catch (error) {
-      Alert.alert('Attendance Failed', error.message);
+      console.error('Attendance error:', error);
+      Alert.alert('❌ Attendance Failed', error.message || 'Please try again.');
     } finally {
       setLoading(false);
+      setLoadingMessage('');
     }
   };
 
@@ -121,20 +194,7 @@ export default function MarkAttendanceScreen({ navigation }) {
           facing="front"
         />
         <View style={styles.cameraOverlay}>
-          <View style={styles.cameraControls}>
-            <TouchableOpacity
-              onPress={() => setShowCamera(false)}
-              style={styles.cameraButton}
-            >
-              <MaterialIcons name="close" size={24} color="white" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={takePhoto}
-              style={[styles.cameraButton, styles.captureButton]}
-            >
-              <MaterialIcons name="camera" size={24} color="white" />
-            </TouchableOpacity>
-          </View>
+          <Text style={styles.cameraText}>Taking photo...</Text>
         </View>
       </View>
     );
@@ -177,40 +237,21 @@ export default function MarkAttendanceScreen({ navigation }) {
           <>
             <Button
               mode="contained"
-              onPress={requestCameraPermission}
-              disabled={!!photo}
-              icon="camera"
-              style={styles.button}
-            >
-              {photo ? 'Photo Captured ✓' : 'Take Attendance Photo'}
-            </Button>
-
-            <Button
-              mode="contained"
-              onPress={getLocation}
-              disabled={!!location}
-              icon="map-marker"
-              style={styles.button}
-            >
-              {location ? 'Location Captured ✓' : 'Get Location'}
-            </Button>
-
-            {photo && location && (
-              <View style={styles.alert}>
-                <Text>Ready to {attendanceDirection === 'IN' ? 'check in' : 'check out'}! Photo and location captured.</Text>
-              </View>
-            )}
-
-            <Button
-              mode="contained"
               onPress={handleMarkAttendance}
-              disabled={!photo || !location || loading}
+              disabled={loading}
               style={[styles.button, attendanceDirection === 'OUT' ? styles.checkOutButton : styles.checkInButton]}
             >
-              {loading ? <ActivityIndicator color="white" /> : 
+              {loading ? <ActivityIndicator color="white" /> :
                 attendanceDirection === 'IN' ? 'CHECK IN' : 'CHECK OUT'
               }
             </Button>
+
+            {loading && loadingMessage && (
+              <View style={styles.loadingCard}>
+                <ActivityIndicator size="small" color="#059669" />
+                <Text style={styles.loadingText}>{loadingMessage}</Text>
+              </View>
+            )}
           </>
         ) : (
           <View style={styles.completedCard}>
@@ -320,6 +361,29 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 24,
+    alignItems: 'center',
+  },
+  cameraText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  loadingCard: {
+    width: '100%',
+    padding: 16,
+    backgroundColor: '#f0f9ff',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#0ea5e9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  loadingText: {
+    color: '#0ea5e9',
+    fontSize: 14,
+    fontWeight: '500',
   },
   cameraControls: {
     flexDirection: 'row',

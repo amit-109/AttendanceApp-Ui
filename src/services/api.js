@@ -12,7 +12,21 @@ class ApiService {
     try {
       let deviceId = await AsyncStorage.getItem('deviceId');
       if (!deviceId) {
-        deviceId = Device.osInternalBuildId || `${Device.brand}_${Device.modelName}_${Date.now()}`;
+        // Use UUID for development mode, Android ID for production
+        const isDevelopment = __DEV__; // React Native global variable
+
+        if (isDevelopment) {
+          // Generate UUID v4 for development (Expo Go, local testing)
+          deviceId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        } else {
+          // Use Android ID for production
+          deviceId = Device.osInternalBuildId || `${Device.brand}_${Device.modelName}_${Date.now()}`;
+        }
+
         await AsyncStorage.setItem('deviceId', deviceId);
       }
       return deviceId;
@@ -129,43 +143,65 @@ class ApiService {
   }
 
   // Attendance endpoints
-  async markAttendance(direction, location = null, photo = null) {
+  async markAttendance(direction, location = null, photoUri = null) {
     const url = `${this.baseURL}/attendance`;
     const token = await this.getToken();
     const userData = await AsyncStorage.getItem('userData');
     const user = userData ? JSON.parse(userData) : null;
 
+    console.log('Building FormData for attendance:', {
+      direction,
+      userId: user?.user_id || user?.id,
+      location,
+      photoUri
+    });
+
     const formData = new FormData();
-    formData.append('direction', direction); // 'IN' or 'OUT'
-    formData.append('user_id', user?.user_id?.toString() || user?.id?.toString());
-    
-    if (location) {
+    formData.append('direction', direction);
+    formData.append('user_id', (user?.user_id || user?.id)?.toString());
+
+    if (location && location.latitude && location.longitude) {
       formData.append('latitude', location.latitude.toString());
       formData.append('longitude', location.longitude.toString());
     }
-    
-    if (photo) {
+
+    if (photoUri) {
+      // For React Native, we need to handle the photo URI properly
+      const fileName = `attendance_${Date.now()}.jpg`;
       formData.append('photo', {
-        uri: photo,
+        uri: photoUri,
         type: 'image/jpeg',
-        name: 'attendance.jpg',
+        name: fileName,
       });
+      console.log('Added photo to FormData:', { uri: photoUri, name: fileName });
     }
 
+    console.log('FormData contents prepared');
+
     try {
+      console.log('Making attendance API call...');
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
+          'Authorization': `Bearer ${token}`
+          // Note: Don't set Content-Type for FormData - browser sets it automatically with boundary
         },
         body: formData,
       });
 
-      const data = await response.json();
+      console.log('API response status:', response.status);
+
+      let data;
+      try {
+        data = await response.json();
+        console.log('API response data:', data);
+      } catch (parseError) {
+        console.error('Failed to parse API response:', parseError);
+        throw new Error('Invalid response from server');
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || data.error || 'Attendance marking failed');
+        throw new Error(data.message || data.error || `HTTP ${response.status}: ${response.statusText}`);
       }
 
       return data;
@@ -178,13 +214,14 @@ class ApiService {
   async getAttendanceHistory() {
     const userData = await AsyncStorage.getItem('userData');
     const user = userData ? JSON.parse(userData) : null;
-    
+
     if (user.role === 1) {
       // Admin - get all attendance records
       return this.request('/attendance');
     } else {
       // Employee - get own attendance records
-      return this.request(`/attendance/${user.user_id || user.id}`);
+      const userId = user.user_id || user.id;
+      return this.request(`/attendance/${userId}`);
     }
   }
 
@@ -211,31 +248,73 @@ class ApiService {
     });
   }
 
+  async getUserProfile() {
+    const userData = await AsyncStorage.getItem('userData');
+    const user = userData ? JSON.parse(userData) : null;
+    if (!user) return null;
+    return this.request(`/users/${user.user_id || user.id}`);
+  }
+
+  async getLeaveHistory() {
+    const userData = await AsyncStorage.getItem('userData');
+    const user = userData ? JSON.parse(userData) : null;
+
+    if (user.role === 1) {
+      // Admin - get all leaves
+      return this.request('/leaves');
+    } else {
+      // Employee - get own leaves via leaves-user endpoint
+      const userId = user.user_id || user.id;
+      return this.request(`/leaves-user/${userId}`);
+    }
+  }
+
+  // User management APIs (Admin only)
+  async updateUser(id, userData) {
+    return this.request(`/users/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(userData),
+    });
+  }
+
+  async deleteUser(id) {
+    return this.request(`/users/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
   // Helper methods
   async getTodayAttendanceStatus() {
     try {
       const token = await this.getToken();
       if (!token) return null;
-      
+
       const userData = await AsyncStorage.getItem('userData');
       const user = userData ? JSON.parse(userData) : null;
-      
+
       if (!user) return null;
-      
-      const today = new Date().toISOString().split('T')[0];
+
       const attendance = await this.getAttendanceByUserId(user.user_id || user.id);
-      
+
+      // Handle case where attendance is empty or not an array
+      if (!Array.isArray(attendance) || attendance.length === 0) {
+        return null;
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+
       // Find today's records
       const todayRecords = attendance.filter(record => {
+        if (!record.CreatedAt) return false;
         const recordDate = new Date(record.CreatedAt).toISOString().split('T')[0];
         return recordDate === today;
       });
-      
+
       if (todayRecords.length === 0) return null;
-      
+
       // Sort by time to get the latest record
       todayRecords.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
-      
+
       return {
         direction: todayRecords[0].Direction,
         created_at: todayRecords[0].CreatedAt,
@@ -243,7 +322,8 @@ class ApiService {
         hasCheckedOut: todayRecords.some(r => r.Direction === 'OUT')
       };
     } catch (error) {
-      console.error('Get today status error:', error);
+      // Silently handle errors - don't show console errors for empty data
+      console.log('No attendance data available');
       return null;
     }
   }
