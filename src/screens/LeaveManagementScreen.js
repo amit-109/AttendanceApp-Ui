@@ -1,9 +1,9 @@
 import { MaterialIcons } from '@expo/vector-icons';
-import { useEffect, useState } from 'react';
-import { Alert, FlatList, StyleSheet, View, Platform } from 'react-native';
-import { ActivityIndicator, Button, Card, Chip, FAB, Modal, Portal, SegmentedButtons, Text, TextInput } from 'react-native-paper';
-import { Picker } from '@react-native-picker/picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
+import { useEffect, useState } from 'react';
+import { Alert, FlatList, Platform, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Button, Card, Chip, FAB, Modal, Portal, Text, TextInput } from 'react-native-paper';
 import Toast from 'react-native-toast-message';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
@@ -69,9 +69,15 @@ export default function LeaveManagementScreen() {
         }
         setLeaves(userLeaves);
       } catch (leaveError) {
-        console.error('Error loading leave history:', leaveError);
-        // If leave history fails to load, show empty list
-        setLeaves([]);
+        // Handle "No leaves found" as valid empty result
+        if (leaveError.message && (leaveError.message.includes('No leaves found') || leaveError.message.includes('No data found'))) {
+          console.log('No leave applications found - showing empty list');
+          setLeaves([]);
+        } else {
+          console.error('Error loading leave history:', leaveError);
+          // If leave history fails to load, show empty list
+          setLeaves([]);
+        }
       }
 
     } catch (error) {

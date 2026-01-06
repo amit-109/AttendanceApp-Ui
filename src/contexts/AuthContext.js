@@ -17,6 +17,11 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [cachedData, setCachedData] = useState({
+    attendanceData: [],
+    leaveData: [],
+    profileData: null
+  });
 
   // Initialize API service with token getter
   useEffect(() => {
@@ -32,8 +37,58 @@ export const AuthProvider = ({ children }) => {
 
   // Load stored auth data on app start
   useEffect(() => {
-    loadAuthData();
+    initializeAppData();
   }, []);
+
+  const initializeAppData = async () => {
+    try {
+      await loadAuthData();
+
+      // If user is authenticated, fetch fresh data from APIs
+      if (token && user) {
+        await loadCachedData(); // Load cache first for immediate display
+        // Then fetch fresh data in background
+        fetchFreshData();
+      } else {
+        await loadCachedData(); // Load cache even if not authenticated
+      }
+    } catch (error) {
+      console.error('Error initializing app data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchFreshData = async () => {
+    try {
+      // Fetch fresh attendance data
+      const attendanceData = await apiService.getAttendanceHistory();
+      if (Array.isArray(attendanceData)) {
+        await updateCachedAttendanceData(attendanceData);
+      }
+
+      // Fetch fresh leave data
+      const leaveData = await apiService.getLeaveHistory();
+      if (Array.isArray(leaveData)) {
+        await updateCachedLeaveData(leaveData);
+      }
+    } catch (error) {
+      // Handle expected "no data" errors silently
+      if (error.message && (error.message.includes('No ') || error.message.includes(' found') || error.message.includes('Record not found'))) {
+        // These are expected - update cache with empty arrays
+        if (error.message.includes('attendance') || error.message.includes('leave')) {
+          const emptyData = [];
+          if (error.message.includes('attendance')) {
+            await updateCachedAttendanceData(emptyData);
+          } else if (error.message.includes('leave')) {
+            await updateCachedLeaveData(emptyData);
+          }
+        }
+      } else {
+        console.error('Error fetching fresh data:', error);
+      }
+    }
+  };
 
   // Automatic logout detection when admin logs out user
   useEffect(() => {
@@ -87,6 +142,53 @@ export const AuthProvider = ({ children }) => {
     };
   }, [token, user]);
 
+  const loadCachedData = async () => {
+    try {
+      const cachedAttendance = await AsyncStorage.getItem('cachedAttendanceData');
+      const cachedLeave = await AsyncStorage.getItem('cachedLeaveData');
+      const cachedProfile = await AsyncStorage.getItem('cachedProfileData');
+
+      const attendanceData = cachedAttendance ? JSON.parse(cachedAttendance) : [];
+      const leaveData = cachedLeave ? JSON.parse(cachedLeave) : [];
+      const profileData = cachedProfile ? JSON.parse(cachedProfile) : null;
+
+      setCachedData({
+        attendanceData,
+        leaveData,
+        profileData
+      });
+    } catch (error) {
+      console.error('Error loading cached data:', error);
+    }
+  };
+
+  const updateCachedAttendanceData = async (data) => {
+    try {
+      await AsyncStorage.setItem('cachedAttendanceData', JSON.stringify(data));
+      setCachedData(prev => ({ ...prev, attendanceData: data }));
+    } catch (error) {
+      console.error('Error caching attendance data:', error);
+    }
+  };
+
+  const updateCachedLeaveData = async (data) => {
+    try {
+      await AsyncStorage.setItem('cachedLeaveData', JSON.stringify(data));
+      setCachedData(prev => ({ ...prev, leaveData: data }));
+    } catch (error) {
+      console.error('Error caching leave data:', error);
+    }
+  };
+
+  const updateCachedProfileData = async (data) => {
+    try {
+      await AsyncStorage.setItem('cachedProfileData', JSON.stringify(data));
+      setCachedData(prev => ({ ...prev, profileData: data }));
+    } catch (error) {
+      console.error('Error caching profile data:', error);
+    }
+  };
+
   const loadAuthData = async () => {
     try {
       const storedToken = await AsyncStorage.getItem('authToken');
@@ -123,8 +225,6 @@ export const AuthProvider = ({ children }) => {
         await AsyncStorage.removeItem('userData');
         await AsyncStorage.removeItem('refreshToken');
       }
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -158,6 +258,15 @@ export const AuthProvider = ({ children }) => {
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
       await AsyncStorage.removeItem('deviceId');
+      await AsyncStorage.removeItem('cachedAttendanceData');
+      await AsyncStorage.removeItem('cachedLeaveData');
+      await AsyncStorage.removeItem('cachedProfileData');
+
+      setCachedData({
+        attendanceData: [],
+        leaveData: [],
+        profileData: null
+      });
 
       return { success: true };
     } catch (error) {
@@ -189,6 +298,10 @@ export const AuthProvider = ({ children }) => {
     logout,
     isAuthenticated: !!token,
     isEmployee: user?.role === 2,
+    cachedData,
+    updateCachedAttendanceData,
+    updateCachedLeaveData,
+    updateCachedProfileData,
   };
 
   return (

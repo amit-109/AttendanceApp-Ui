@@ -8,22 +8,52 @@ import apiService from '../services/api';
 export default function LeaveHistoryScreen() {
   const [leaveData, setLeaveData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
+  const [refreshing, setRefreshing] = useState(false);
+  const { user, cachedData, updateCachedLeaveData, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    loadLeaveHistory();
-  }, []);
+    if (user && !authLoading) {
+      // Use cached data (already refreshed by AuthContext on app launch)
+      setLeaveData(cachedData.leaveData || []);
+      setLoading(false);
+    }
+  }, [user, authLoading, cachedData.leaveData]);
 
-  const loadLeaveHistory = async () => {
+  const loadLeaveHistory = async (showLoading = true) => {
+    if (showLoading) {
+      setRefreshing(true);
+    }
+
     try {
       const data = await apiService.getLeaveHistory();
       setLeaveData(data);
+      // Cache the data
+      await updateCachedLeaveData(data);
     } catch (error) {
-      Alert.alert('Error', 'Failed to load leave history');
-      console.error('Error loading leave history:', error);
+      // Handle "No leaves found" as valid empty result for both background and user refresh
+      if (error.message && (error.message.includes('No leaves found') || error.message.includes('No data found'))) {
+        console.log('Treating leave error as empty data');
+        const emptyData = [];
+        setLeaveData(emptyData);
+        await updateCachedLeaveData(emptyData);
+      } else if (showLoading) {
+        Alert.alert('Error', 'Failed to load leave history');
+        console.error('Error loading leave history:', error);
+      } else {
+        // For background refresh, silently handle other errors
+        console.log('Background leave refresh failed silently:', error.message);
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
+  };
+
+  const onRefresh = () => {
+    loadLeaveHistory(true);
   };
 
   const formatDate = (dateString) => {
@@ -137,8 +167,8 @@ export default function LeaveHistoryScreen() {
             keyExtractor={(item, index) => (item._id || item.id || index).toString()}
             renderItem={renderLeaveItem}
             showsVerticalScrollIndicator={false}
-            refreshing={loading}
-            onRefresh={loadLeaveHistory}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
           />
         )}
       </View>
