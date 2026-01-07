@@ -24,7 +24,7 @@ export default function LeaveManagementScreen() {
   const [showFromDatePicker, setShowFromDatePicker] = useState(false);
   const [showToDatePicker, setShowToDatePicker] = useState(false);
 
-  const { user, cachedData, loading: authLoading } = useAuth();
+  const { user, cachedData, loading: authLoading, updateCachedLeaveData } = useAuth();
 
   useEffect(() => {
     // Only load data if user is authenticated and auth loading is complete
@@ -35,14 +35,17 @@ export default function LeaveManagementScreen() {
     }
   }, [user, authLoading, cachedData.leaveData]);
 
-  const loadData = async () => {
+  const loadData = async (isRefresh = false) => {
     try {
       if (!user) {
         setLoading(false);
         return;
       }
 
-      setLoading(true);
+      // For refresh, show loading indicator, for initial load use existing loading state
+      if (isRefresh) {
+        setLoading(true);
+      }
 
       // Load leave types first (this should work for all authenticated users)
       const typesData = await apiService.getLeaveTypes();
@@ -51,19 +54,44 @@ export default function LeaveManagementScreen() {
       // console.log('Filtered active leave types:', activeTypes);
       setLeaveTypes(activeTypes);
 
-      // Use cached leave data (already refreshed by AuthContext on app launch/login)
-      // console.log('Using cached leave data:', cachedData.leaveData);
-      let userLeaves = [];
-      if (Array.isArray(cachedData.leaveData)) {
-        if (user.role === 1) {
-          // Admin sees all leaves
-          userLeaves = cachedData.leaveData;
-        } else {
-          // Employee sees only their own leaves (should be filtered by backend)
-          userLeaves = cachedData.leaveData;
+      // For refresh or if no cached data, fetch fresh leave data
+      if (isRefresh || !cachedData.leaveData || cachedData.leaveData.length === 0) {
+        console.log('Fetching fresh leave data for refresh or initial load');
+        const leavesData = await apiService.getLeaveHistory();
+        console.log('Fetched fresh leave data:', leavesData);
+
+        // Handle leave data based on user role
+        let userLeaves = [];
+        if (Array.isArray(leavesData)) {
+          if (user.role === 1) {
+            // Admin sees all leaves
+            userLeaves = leavesData;
+          } else {
+            // Employee sees only their own leaves (should be filtered by backend)
+            userLeaves = leavesData;
+          }
         }
+        setLeaves(userLeaves);
+
+        // Update cache with fresh data
+        if (Array.isArray(leavesData)) {
+          await updateCachedLeaveData(leavesData);
+        }
+      } else {
+        // Use cached leave data for initial load
+        console.log('Using cached leave data for initial load');
+        let userLeaves = [];
+        if (Array.isArray(cachedData.leaveData)) {
+          if (user.role === 1) {
+            // Admin sees all leaves
+            userLeaves = cachedData.leaveData;
+          } else {
+            // Employee sees only their own leaves (should be filtered by backend)
+            userLeaves = cachedData.leaveData;
+          }
+        }
+        setLeaves(userLeaves);
       }
-      setLeaves(userLeaves);
 
     } catch (error) {
       console.error('Error loading leave data:', error);
@@ -173,10 +201,18 @@ export default function LeaveManagementScreen() {
         text2: 'Your leave request has been sent for approval',
       });
 
+      // Refresh cached leave data with the new application
+      try {
+        const freshLeaveData = await apiService.getLeaveHistory();
+        if (Array.isArray(freshLeaveData)) {
+          await updateCachedLeaveData(freshLeaveData);
+        }
+      } catch (refreshError) {
+        console.error('Error refreshing leave data after application:', refreshError);
+      }
+
       setShowApplyModal(false);
       resetForm();
-      // Reload data after successful submission
-      loadData();
     } catch (error) {
       console.error('Leave application error:', error);
       const errorMessage = error.response?.data?.error ||
@@ -312,7 +348,7 @@ export default function LeaveManagementScreen() {
           renderItem={renderLeaveItem}
           showsVerticalScrollIndicator={false}
           refreshing={loading}
-          onRefresh={loadData}
+          onRefresh={() => loadData(true)}
           contentContainerStyle={styles.listContainer}
           ListHeaderComponent={
             <Text variant="bodySmall" style={styles.refreshHint}>
@@ -419,18 +455,7 @@ export default function LeaveManagementScreen() {
               multiline
               numberOfLines={3}
               style={styles.input}
-              theme={{
-                colors: {
-                  primary: '#1976d2',
-                  text: '#374151',
-                  placeholder: '#9ca3af',
-                  background: '#ffffff',
-                }
-              }}
-              contentStyle={{
-                color: '#374151',
-                backgroundColor: '#ffffff',
-              }}
+              mode="outlined"
             />
 
             <View style={styles.modalActions}>

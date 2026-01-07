@@ -1,6 +1,6 @@
 import { NavigationContainer } from '@react-navigation/native';
 import { AppRegistry, LogBox, useColorScheme } from 'react-native';
-import { MD3DarkTheme, MD3LightTheme, PaperProvider, adaptNavigationTheme } from 'react-native-paper';
+import { DarkTheme as PaperDarkTheme, DefaultTheme as PaperDefaultTheme, PaperProvider, adaptNavigationTheme } from 'react-native-paper';
 import Toast from 'react-native-toast-message';
 import { AuthProvider } from './src/contexts/AuthContext';
 import AppNavigator from './src/navigation/AppNavigator';
@@ -15,28 +15,10 @@ const { LightTheme, DarkTheme } = adaptNavigationTheme({
   reactNavigationDark: undefined,
 });
 
-const CombinedDefaultTheme = {
-  ...MD3LightTheme,
-  ...LightTheme,
-  colors: {
-    ...MD3LightTheme.colors,
-    ...LightTheme.colors,
-  },
-};
-
-const CombinedDarkTheme = {
-  ...MD3DarkTheme,
-  ...DarkTheme,
-  colors: {
-    ...MD3DarkTheme.colors,
-    ...DarkTheme.colors,
-  },
-};
-
 function App() {
   const colorScheme = useColorScheme();
 
-  const paperTheme = colorScheme === 'dark' ? CombinedDarkTheme : CombinedDefaultTheme;
+  const paperTheme = colorScheme === 'dark' ? PaperDarkTheme : PaperDefaultTheme;
 
   return (
     <PaperProvider theme={paperTheme}>
