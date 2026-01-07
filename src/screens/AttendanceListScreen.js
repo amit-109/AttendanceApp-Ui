@@ -8,16 +8,23 @@ import apiService from '../services/api';
 export default function AttendanceListScreen() {
   const [attendanceData, setAttendanceData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [viewMode, setViewMode] = useState('all');
-  const { user } = useAuth();
+  const { user, cachedData, updateCachedAttendanceData, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    if (user) {
-      loadAttendanceHistory();
+    if (user && !authLoading) {
+      // Use cached data (already transformed by AuthContext)
+      setAttendanceData(cachedData.attendanceData || []);
+      setLoading(false);
     }
-  }, [user]);
+  }, [user, authLoading, cachedData.attendanceData]);
 
-  const loadAttendanceHistory = async () => {
+  const loadAttendanceHistory = async (showLoading = true) => {
+    if (showLoading) {
+      setRefreshing(true);
+    }
+
     try {
       let data;
       if (user.role === 1) {
@@ -27,14 +34,16 @@ export default function AttendanceListScreen() {
         // Employee - get own attendance records
         data = await apiService.getAttendanceByUserId(user.user_id || user.id);
       }
-      
+
       // Ensure data is an array
       if (!Array.isArray(data)) {
-        console.log('API returned non-array data:', data);
-        setAttendanceData([]);
+        // console.log('API returned non-array data:', data);
+        if (showLoading) {
+          setAttendanceData([]);
+        }
         return;
       }
-      
+
       // Transform backend data to match frontend expectations
       const transformedData = data.map((record, index) => ({
         Id: record.Id || record.id || index,
@@ -54,15 +63,33 @@ export default function AttendanceListScreen() {
         } : null,
         notes: record.Notes || record.notes || null
       }));
-      
+
       setAttendanceData(transformedData);
+      // Cache the data
+      await updateCachedAttendanceData(transformedData);
     } catch (error) {
-      Alert.alert('Error', 'Failed to load attendance history');
-      console.error('Error loading attendance:', error);
-      setAttendanceData([]);
+      // Handle "No attendance found" as valid empty result
+      if (error.message && error.message.includes('No attendance found')) {
+        const emptyData = [];
+        setAttendanceData(emptyData);
+        await updateCachedAttendanceData(emptyData);
+      } else if (showLoading) {
+        Alert.alert('Error', 'Failed to load attendance history');
+        console.error('Error loading attendance:', error);
+        setAttendanceData([]);
+      }
+      // For background refresh, silently handle other errors without logging
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
+  };
+
+  const onRefresh = () => {
+    loadAttendanceHistory(true);
   };
 
   const formatDate = (dateString) => {
@@ -110,7 +137,7 @@ export default function AttendanceListScreen() {
             )}
           </View>
           <Text variant="labelSmall" style={[styles.status, { color: getStatusColor(item.status) }]}>
-            {item.status.toUpperCase()}
+            {(item.status || 'UNKNOWN').toUpperCase()}
           </Text>
         </View>
 
@@ -208,6 +235,8 @@ export default function AttendanceListScreen() {
           keyExtractor={(item, index) => (item.Id || index).toString()}
           contentContainerStyle={styles.listContainer}
           showsVerticalScrollIndicator={false}
+          refreshing={refreshing}
+          onRefresh={onRefresh}
         />
       )}
     </View>

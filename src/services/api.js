@@ -63,7 +63,11 @@ class ApiService {
 
       return data;
     } catch (error) {
-      console.error('API Error:', error);
+      // Don't log expected "no data found" errors to avoid console spam
+      if (!error.message ||
+          (!error.message.includes('No ') && !error.message.includes(' found') && !error.message.includes('Record not found'))) {
+        console.error('API Error:', error);
+      }
       throw error;
     }
   }

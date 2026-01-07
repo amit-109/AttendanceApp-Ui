@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Alert, StyleSheet, View, Image, Dimensions } from 'react-native';
-import { ActivityIndicator, Button, Modal, Portal, Text, TextInput, Surface } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useState } from 'react';
+import { Alert, Dimensions, Image, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Button, Modal, Portal, Surface, Text, TextInput } from 'react-native-paper';
 import Toast from 'react-native-toast-message';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -109,7 +109,6 @@ export default function LoginScreen() {
                   keyboardType="email-address"
                   style={styles.input}
                   mode="outlined"
-                  theme={{ colors: { primary: '#667eea' } }}
                 />
 
                 <TextInput
@@ -119,7 +118,6 @@ export default function LoginScreen() {
                   secureTextEntry={!showPassword}
                   style={styles.input}
                   mode="outlined"
-                  theme={{ colors: { primary: '#667eea' } }}
                   right={
                     <TextInput.Icon
                       icon={showPassword ? "eye-off" : "eye"}
@@ -194,6 +192,7 @@ export default function LoginScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             style={styles.input}
+            mode="outlined"
           />
 
           <View style={styles.modalActions}>
