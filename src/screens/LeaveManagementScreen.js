@@ -419,18 +419,7 @@ export default function LeaveManagementScreen() {
               multiline
               numberOfLines={3}
               style={styles.input}
-              theme={{
-                colors: {
-                  primary: '#1976d2',
-                  text: '#374151',
-                  placeholder: '#9ca3af',
-                  background: '#ffffff',
-                }
-              }}
-              contentStyle={{
-                color: '#374151',
-                backgroundColor: '#ffffff',
-              }}
+              mode="outlined"
             />
 
             <View style={styles.modalActions}>
