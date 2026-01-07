@@ -61,10 +61,28 @@ export const AuthProvider = ({ children }) => {
 
   const fetchFreshData = async () => {
     try {
-      // Fetch fresh attendance data
-      const attendanceData = await apiService.getAttendanceHistory();
-      if (Array.isArray(attendanceData)) {
-        await updateCachedAttendanceData(attendanceData);
+      // Fetch fresh attendance data and transform it
+      const rawAttendanceData = await apiService.getAttendanceHistory();
+      if (Array.isArray(rawAttendanceData)) {
+        const transformedAttendanceData = rawAttendanceData.map((record, index) => ({
+          Id: record.Id || record.id || index,
+          date: record.CreatedAt || record.created_at,
+          checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
+          checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
+          status: 'present',
+          location: {
+            latitude: parseFloat(record.Latitude || record.latitude || 0),
+            longitude: parseFloat(record.Longitude || record.longitude || 0)
+          },
+          photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
+          employee: user?.role === 1 ? {
+            _id: record.UserId || record.user_id,
+            name: record.UserName || record.user_name || 'Unknown',
+            email: record.UserEmail || record.user_email || 'unknown@email.com'
+          } : null,
+          notes: record.Notes || record.notes || null
+        }));
+        await updateCachedAttendanceData(transformedAttendanceData);
       }
 
       // Fetch fresh leave data
@@ -241,6 +259,54 @@ export const AuthProvider = ({ children }) => {
       // Store in AsyncStorage
       await AsyncStorage.setItem('authToken', newToken);
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
+
+      // After successful login, fetch fresh data since cache was cleared on logout
+      try {
+        // Fetch fresh attendance data and transform it
+        const rawAttendanceData = await apiService.getAttendanceHistory();
+        if (Array.isArray(rawAttendanceData)) {
+          const transformedAttendanceData = rawAttendanceData.map((record, index) => ({
+            Id: record.Id || record.id || index,
+            date: record.CreatedAt || record.created_at,
+            checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
+            checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
+            status: 'present',
+            location: {
+              latitude: parseFloat(record.Latitude || record.latitude || 0),
+              longitude: parseFloat(record.Longitude || record.longitude || 0)
+            },
+            photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
+            employee: userData.role === 1 ? {
+              _id: record.UserId || record.user_id,
+              name: record.UserName || record.user_name || 'Unknown',
+              email: record.UserEmail || record.user_email || 'unknown@email.com'
+            } : null,
+            notes: record.Notes || record.notes || null
+          }));
+          await updateCachedAttendanceData(transformedAttendanceData);
+        }
+
+        // Fetch fresh leave data
+        const leaveData = await apiService.getLeaveHistory();
+        if (Array.isArray(leaveData)) {
+          await updateCachedLeaveData(leaveData);
+        }
+      } catch (fetchError) {
+        // Handle expected "no data" errors silently
+        if (fetchError.message && (fetchError.message.includes('No ') || fetchError.message.includes(' found') || fetchError.message.includes('Record not found'))) {
+          // These are expected - update cache with empty arrays
+          if (fetchError.message.includes('attendance') || fetchError.message.includes('leave')) {
+            const emptyData = [];
+            if (fetchError.message.includes('attendance')) {
+              await updateCachedAttendanceData(emptyData);
+            } else if (fetchError.message.includes('leave')) {
+              await updateCachedLeaveData(emptyData);
+            }
+          }
+        } else {
+          console.error('Error fetching fresh data after login:', fetchError);
+        }
+      }
 
       return { success: true };
     } catch (error) {

@@ -15,7 +15,7 @@ export default function LeaveManagementScreen() {
   const [viewMode, setViewMode] = useState('myLeaves');
   const [showApplyModal, setShowApplyModal] = useState(false);
   const [applyLoading, setApplyLoading] = useState(false);
-  
+
   // Form state
   const [selectedLeaveType, setSelectedLeaveType] = useState('');
   const [dateFrom, setDateFrom] = useState(new Date());
@@ -24,16 +24,16 @@ export default function LeaveManagementScreen() {
   const [showFromDatePicker, setShowFromDatePicker] = useState(false);
   const [showToDatePicker, setShowToDatePicker] = useState(false);
 
-  const { user } = useAuth();
+  const { user, cachedData, loading: authLoading } = useAuth();
 
   useEffect(() => {
-    // Only load data if user is authenticated and has a token
-    if (user && user.id) {
+    // Only load data if user is authenticated and auth loading is complete
+    if (user && user.id && !authLoading) {
       loadData();
     } else {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, authLoading, cachedData.leaveData]);
 
   const loadData = async () => {
     try {
@@ -46,39 +46,24 @@ export default function LeaveManagementScreen() {
 
       // Load leave types first (this should work for all authenticated users)
       const typesData = await apiService.getLeaveTypes();
-      console.log('Loaded leave types:', typesData);
+      // console.log('Loaded leave types:', typesData);
       const activeTypes = Array.isArray(typesData) ? typesData.filter(type => type.IsActive === 1) : [];
-      console.log('Filtered active leave types:', activeTypes);
+      // console.log('Filtered active leave types:', activeTypes);
       setLeaveTypes(activeTypes);
 
-      // Load leave history for both admins and employees
-      try {
-        const leavesData = await apiService.getLeaveHistory();
-        console.log('Loaded leave applications:', leavesData);
-
-        // Handle leave data based on user role
-        let userLeaves = [];
-        if (Array.isArray(leavesData)) {
-          if (user.role === 1) {
-            // Admin sees all leaves
-            userLeaves = leavesData;
-          } else {
-            // Employee sees only their own leaves (should be filtered by backend)
-            userLeaves = leavesData;
-          }
-        }
-        setLeaves(userLeaves);
-      } catch (leaveError) {
-        // Handle "No leaves found" as valid empty result
-        if (leaveError.message && (leaveError.message.includes('No leaves found') || leaveError.message.includes('No data found'))) {
-          console.log('No leave applications found - showing empty list');
-          setLeaves([]);
+      // Use cached leave data (already refreshed by AuthContext on app launch/login)
+      // console.log('Using cached leave data:', cachedData.leaveData);
+      let userLeaves = [];
+      if (Array.isArray(cachedData.leaveData)) {
+        if (user.role === 1) {
+          // Admin sees all leaves
+          userLeaves = cachedData.leaveData;
         } else {
-          console.error('Error loading leave history:', leaveError);
-          // If leave history fails to load, show empty list
-          setLeaves([]);
+          // Employee sees only their own leaves (should be filtered by backend)
+          userLeaves = cachedData.leaveData;
         }
       }
+      setLeaves(userLeaves);
 
     } catch (error) {
       console.error('Error loading leave data:', error);
@@ -176,7 +161,7 @@ export default function LeaveManagementScreen() {
         leave_reason: leaveReason.trim()
       };
 
-      console.log('Submitting leave application:', formattedData);
+      // console.log('Submitting leave application:', formattedData);
 
       setApplyLoading(true);
 

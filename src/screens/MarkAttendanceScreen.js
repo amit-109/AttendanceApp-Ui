@@ -26,7 +26,7 @@ export default function MarkAttendanceScreen({ navigation }) {
       loadTodayStatus();
       requestPermissions();
     }
-  }, [user, authLoading]);
+  }, [user, authLoading, cachedData.attendanceData]);
 
   const requestPermissions = async () => {
     try {
@@ -89,6 +89,58 @@ export default function MarkAttendanceScreen({ navigation }) {
       }
     } catch (error) {
       console.error('Error loading today status from cache:', error);
+      setTodayStatus(null);
+      setAttendanceDirection('IN');
+    }
+  };
+
+  const loadTodayStatusFromData = (attendanceData) => {
+    try {
+      if (!user || !attendanceData) return;
+
+      // Get today's date
+      const today = new Date().toISOString().split('T')[0];
+
+      // Find today's records from provided data
+      const todayRecords = attendanceData.filter(record => {
+        if (!record.date) return false;
+        const recordDate = new Date(record.date).toISOString().split('T')[0];
+        return recordDate === today;
+      });
+
+      if (todayRecords.length === 0) {
+        setTodayStatus(null);
+        setAttendanceDirection('IN');
+        return;
+      }
+
+      // Sort by time to get the latest record
+      todayRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      const latestRecord = todayRecords[0];
+      const hasCheckedIn = todayRecords.some(r => r.checkIn);
+      const hasCheckedOut = todayRecords.some(r => r.checkOut);
+
+      const status = {
+        direction: latestRecord.checkOut ? 'OUT' : 'IN',
+        created_at: latestRecord.checkOut || latestRecord.checkIn,
+        hasCheckedIn,
+        hasCheckedOut
+      };
+
+      setTodayStatus(status);
+
+      // Determine next action based on today's records
+      if (hasCheckedIn && !hasCheckedOut) {
+        setAttendanceDirection('OUT');
+      } else if (hasCheckedIn && hasCheckedOut) {
+        // Both check-in and check-out done
+        setAttendanceDirection(null);
+      } else {
+        setAttendanceDirection('IN');
+      }
+    } catch (error) {
+      console.error('Error loading today status from data:', error);
       setTodayStatus(null);
       setAttendanceDirection('IN');
     }
@@ -221,15 +273,15 @@ export default function MarkAttendanceScreen({ navigation }) {
             } : null,
             notes: record.Notes || record.notes || null
           }));
-          // Update cached data
-          updateCachedAttendanceData(transformedData);
+          // Update cached data and immediately update status with fresh data
+          await updateCachedAttendanceData(transformedData);
+          loadTodayStatusFromData(transformedData);
         }
       } catch (refreshError) {
         console.error('Error refreshing cached data:', refreshError);
+        // Still try to update status with current cache if refresh fails
+        loadTodayStatus();
       }
-
-      // Update status
-      loadTodayStatus();
 
     } catch (error) {
       console.error('Attendance error:', error);

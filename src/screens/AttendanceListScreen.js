@@ -14,7 +14,7 @@ export default function AttendanceListScreen() {
 
   useEffect(() => {
     if (user && !authLoading) {
-      // Use cached data (already refreshed by AuthContext on app launch)
+      // Use cached data (already transformed by AuthContext)
       setAttendanceData(cachedData.attendanceData || []);
       setLoading(false);
     }
@@ -37,7 +37,7 @@ export default function AttendanceListScreen() {
 
       // Ensure data is an array
       if (!Array.isArray(data)) {
-        console.log('API returned non-array data:', data);
+        // console.log('API returned non-array data:', data);
         if (showLoading) {
           setAttendanceData([]);
         }
@@ -137,7 +137,7 @@ export default function AttendanceListScreen() {
             )}
           </View>
           <Text variant="labelSmall" style={[styles.status, { color: getStatusColor(item.status) }]}>
-            {item.status.toUpperCase()}
+            {(item.status || 'UNKNOWN').toUpperCase()}
           </Text>
         </View>
 
