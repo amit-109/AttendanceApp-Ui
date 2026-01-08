@@ -4,7 +4,7 @@
     "slug": "AttendanceApp",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/SE_Logo_Rev1.png",
+    "icon": "./assets/images/ic_launcher.png",
     "scheme": "attendanceapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
