@@ -33,7 +33,7 @@ export default function LeaveManagementScreen() {
     } else {
       setLoading(false);
     }
-  }, [user, authLoading, cachedData.leaveData]);
+  }, [user, authLoading]);
 
   const loadData = async (isRefresh = false) => {
     try {
@@ -54,48 +54,52 @@ export default function LeaveManagementScreen() {
       // console.log('Filtered active leave types:', activeTypes);
       setLeaveTypes(activeTypes);
 
-      // For refresh or if no cached data, fetch fresh leave data
-      if (isRefresh || !cachedData.leaveData || cachedData.leaveData.length === 0) {
-        console.log('Fetching fresh leave data for refresh or initial load');
-        const leavesData = await apiService.getLeaveHistory();
-        console.log('Fetched fresh leave data:', leavesData);
+      // Always prioritize cached data if available, only fetch fresh if cache is empty
+      if (!cachedData.leaveData || cachedData.leaveData.length === 0) {
+        console.log('No cached leave data, fetching fresh data');
+        console.log('User data:', { id: user?.id, userId: user?.user_id || user?.id, role: user?.role });
+        try {
+          const leavesData = await apiService.getLeaveHistory();
+          console.log('Fetched fresh leave data:', leavesData);
+          console.log('Leave data type:', typeof leavesData, 'Is array:', Array.isArray(leavesData));
 
-        // Handle leave data based on user role
-        let userLeaves = [];
-        if (Array.isArray(leavesData)) {
-          if (user.role === 1) {
-            // Admin sees all leaves
-            userLeaves = leavesData;
-          } else {
-            // Employee sees only their own leaves (should be filtered by backend)
+          let userLeaves = [];
+          if (Array.isArray(leavesData)) {
             userLeaves = leavesData;
           }
-        }
-        setLeaves(userLeaves);
+          setLeaves(userLeaves);
 
-        // Update cache with fresh data
-        if (Array.isArray(leavesData)) {
-          await updateCachedLeaveData(leavesData);
+          // Update cache with fresh data
+          await updateCachedLeaveData(userLeaves);
+        } catch (apiError) {
+          console.log('API call failed, setting empty leaves:', apiError.message);
+          setLeaves([]);
+          await updateCachedLeaveData([]);
         }
       } else {
-        // Use cached leave data for initial load
-        console.log('Using cached leave data for initial load');
-        let userLeaves = [];
-        if (Array.isArray(cachedData.leaveData)) {
-          if (user.role === 1) {
-            // Admin sees all leaves
-            userLeaves = cachedData.leaveData;
-          } else {
-            // Employee sees only their own leaves (should be filtered by backend)
-            userLeaves = cachedData.leaveData;
+        // Use cached leave data (this should work since it was populated during login)
+        console.log('Using cached leave data:', cachedData.leaveData.length, 'records');
+        setLeaves(cachedData.leaveData);
+
+        // Only refresh from API if explicitly requested (pull-to-refresh)
+        if (isRefresh) {
+          console.log('Refresh requested, attempting to update cache in background');
+          try {
+            const freshData = await apiService.getLeaveHistory();
+            if (Array.isArray(freshData)) {
+              console.log('Updated cache with fresh data:', freshData.length, 'records');
+              await updateCachedLeaveData(freshData);
+              setLeaves(freshData); // Update UI with fresh data
+            }
+          } catch (refreshError) {
+            console.log('Refresh failed, keeping cached data:', refreshError.message);
+            // Keep cached data, don't show error
           }
         }
-        setLeaves(userLeaves);
       }
 
     } catch (error) {
-      console.error('Error loading leave data:', error);
-      // Handle general errors (like leave types failing)
+      // Handle specific error types without logging expected errors
       if (error.message?.includes('Unauthorized') || error.message?.includes('401')) {
         console.log('Authentication token invalid - redirecting to login');
         // Token is invalid, user needs to login again
@@ -107,7 +111,13 @@ export default function LeaveManagementScreen() {
             },
           },
         ]);
+      } else if (error.message?.includes('No ') || error.message?.includes(' found') || error.message?.includes('leaves')) {
+        // Expected "no data" errors - set empty state silently
+        console.log('No leave data available - showing empty state');
+        setLeaves([]);
       } else {
+        // Unexpected errors - only log these
+        console.error('Unexpected error loading leave data:', error);
         Alert.alert('Error', 'Failed to load data. Please check your connection.');
       }
     } finally {
@@ -206,9 +216,20 @@ export default function LeaveManagementScreen() {
         const freshLeaveData = await apiService.getLeaveHistory();
         if (Array.isArray(freshLeaveData)) {
           await updateCachedLeaveData(freshLeaveData);
+        } else {
+          // If no data returned, clear the cache to force refresh on next load
+          await updateCachedLeaveData([]);
         }
       } catch (refreshError) {
-        console.error('Error refreshing leave data after application:', refreshError);
+        // Don't log expected "no data" errors after application
+        if (refreshError.message &&
+            !refreshError.message.includes('No ') &&
+            !refreshError.message.includes(' found') &&
+            !refreshError.message.includes('leaves')) {
+          console.error('Unexpected error refreshing leave data after application:', refreshError);
+        }
+        // Clear cache on error to force fresh load later
+        await updateCachedLeaveData([]);
       }
 
       setShowApplyModal(false);

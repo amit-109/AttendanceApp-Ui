@@ -65,7 +65,7 @@ class ApiService {
     } catch (error) {
       // Don't log expected "no data found" errors to avoid console spam
       if (!error.message ||
-          (!error.message.includes('No ') && !error.message.includes(' found') && !error.message.includes('Record not found'))) {
+          (!error.message.includes('No ') && !error.message.includes(' found') && !error.message.includes('Record not found') && !error.message.includes('leaves'))) {
         console.error('API Error:', error);
       }
       throw error;
@@ -263,7 +263,10 @@ class ApiService {
     const userData = await AsyncStorage.getItem('userData');
     const user = userData ? JSON.parse(userData) : null;
 
-    if (user.role === 1) {
+    // If role is undefined, assume employee (role 2)
+    const userRole = user.role || 2;
+
+    if (userRole === 1) {
       // Admin - get all leaves
       return this.request('/leaves');
     } else {
