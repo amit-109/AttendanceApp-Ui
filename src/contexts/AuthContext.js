@@ -132,6 +132,36 @@ export const AuthProvider = ({ children }) => {
                 },
               ]
             );
+          } else if (result && result.token) {
+            // Update with fresh token if provided
+            const { token: newToken, user: userData } = result;
+
+            // CRITICAL FIX: Validate user data before overwriting
+            const currentUserData = await AsyncStorage.getItem('userData');
+            const currentUser = currentUserData ? JSON.parse(currentUserData) : null;
+
+            if (currentUser && userData) {
+              const currentUserId = currentUser.id || currentUser.user_id;
+              const newUserId = userData.id || userData.user_id;
+
+              if (currentUserId !== newUserId) {
+                // Only update token, don't overwrite user data if userId doesn't match
+                setToken(newToken);
+                await AsyncStorage.setItem('authToken', newToken);
+              } else {
+                // User IDs match, proceed with normal update
+                setToken(newToken);
+                setUser(userData);
+                await AsyncStorage.setItem('authToken', newToken);
+                await AsyncStorage.setItem('userData', JSON.stringify(userData));
+              }
+            } else {
+              // If no current user data, proceed with update
+              setToken(newToken);
+              setUser(userData);
+              await AsyncStorage.setItem('authToken', newToken);
+              await AsyncStorage.setItem('userData', JSON.stringify(userData));
+            }
           }
         } catch (error) {
           // If there's an actual error (network, server down), assume user is still logged in
@@ -214,6 +244,7 @@ export const AuthProvider = ({ children }) => {
 
       if (storedToken && storedUser) {
         const userData = JSON.parse(storedUser);
+
         setToken(storedToken);
         setUser(userData);
 
@@ -222,13 +253,30 @@ export const AuthProvider = ({ children }) => {
           const result = await apiService.checkLoginStatus();
           if (result && result.token) {
             // Token is still valid, update with fresh data
-            const { token: newToken, refresh_token, user: userData } = result;
-            setToken(newToken);
-            setUser(userData);
-            await AsyncStorage.setItem('authToken', newToken);
-            await AsyncStorage.setItem('userData', JSON.stringify(userData));
-            if (refresh_token) {
-              await AsyncStorage.setItem('refreshToken', refresh_token);
+            const { token: newToken, user: newUserData } = result;
+
+            // CRITICAL FIX: Validate user data before overwriting in loadAuthData too
+            if (userData && newUserData) {
+              const currentUserId = userData.id || userData.user_id;
+              const newUserId = newUserData.id || newUserData.user_id;
+
+              if (currentUserId !== newUserId) {
+                // Only update token, don't overwrite user data if userId doesn't match
+                setToken(newToken);
+                await AsyncStorage.setItem('authToken', newToken);
+              } else {
+                // User IDs match, proceed with normal update
+                setToken(newToken);
+                setUser(newUserData);
+                await AsyncStorage.setItem('authToken', newToken);
+                await AsyncStorage.setItem('userData', JSON.stringify(newUserData));
+              }
+            } else {
+              // If no current user data, proceed with update
+              setToken(newToken);
+              setUser(newUserData);
+              await AsyncStorage.setItem('authToken', newToken);
+              await AsyncStorage.setItem('userData', JSON.stringify(newUserData));
             }
           }
           // If check fails, keep existing stored data
@@ -241,7 +289,6 @@ export const AuthProvider = ({ children }) => {
       if (error instanceof SyntaxError) {
         await AsyncStorage.removeItem('authToken');
         await AsyncStorage.removeItem('userData');
-        await AsyncStorage.removeItem('refreshToken');
       }
     }
   };

@@ -55,10 +55,34 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
-      const data = await response.json();
 
+      // First check if response is OK before trying to parse JSON
       if (!response.ok) {
-        throw new Error(data.message || data.error || 'API request failed');
+        try {
+          const errorText = await response.text();
+          console.error('API Error Response:', errorText);
+          // Try to parse as JSON, but if it fails, use the raw text
+          try {
+            const errorData = JSON.parse(errorText);
+            throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+          } catch (jsonError) {
+            // If not JSON, use the raw text
+            throw new Error(`API Error: ${response.status} - ${errorText.substring(0, 100)}`);
+          }
+        } catch (textError) {
+          throw new Error(`API Error: ${response.status} - ${response.statusText}`);
+        }
+      }
+
+      let data;
+      try {
+        const responseText = await response.text();
+        // Try to parse as JSON
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse API response as JSON:', parseError);
+        console.error('Raw response:', responseText);
+        throw new Error(`Invalid JSON response from server: ${responseText.substring(0, 100)}`);
       }
 
       return data;
@@ -153,13 +177,6 @@ class ApiService {
     const userData = await AsyncStorage.getItem('userData');
     const user = userData ? JSON.parse(userData) : null;
 
-    console.log('Building FormData for attendance:', {
-      direction,
-      userId: user?.user_id || user?.id,
-      location,
-      photoUri
-    });
-
     const formData = new FormData();
     formData.append('direction', direction);
     formData.append('user_id', (user?.user_id || user?.id)?.toString());
@@ -177,13 +194,9 @@ class ApiService {
         type: 'image/jpeg',
         name: fileName,
       });
-      console.log('Added photo to FormData:', { uri: photoUri, name: fileName });
     }
 
-    console.log('FormData contents prepared');
-
     try {
-      console.log('Making attendance API call...');
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -193,19 +206,34 @@ class ApiService {
         body: formData,
       });
 
-      console.log('API response status:', response.status);
+      // First check if response is OK before trying to parse JSON
+      if (!response.ok) {
+        try {
+          const errorText = await response.text();
+          console.error('API Error Response:', errorText);
+          // Try to parse as JSON, but if it fails, use the raw text
+          try {
+            const errorData = JSON.parse(errorText);
+            throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+          } catch (jsonError) {
+            // If not JSON, use the raw text
+            throw new Error(`API Error: ${response.status} - ${errorText.substring(0, 100)}`);
+          }
+        } catch (textError) {
+          throw new Error(`API Error: ${response.status} - ${response.statusText}`);
+        }
+      }
 
       let data;
       try {
-        data = await response.json();
-        console.log('API response data:', data);
+        const responseText = await response.text();
+        // Try to parse as JSON
+        data = JSON.parse(responseText);
       } catch (parseError) {
-        console.error('Failed to parse API response:', parseError);
-        throw new Error('Invalid response from server');
-      }
-
-      if (!response.ok) {
-        throw new Error(data.message || data.error || `HTTP ${response.status}: ${response.statusText}`);
+        console.error('Failed to parse API response as JSON:', parseError);
+        // Use the responseText we already have, don't read again
+        console.error('Raw response:', responseText);
+        throw new Error(`Invalid JSON response from server: ${responseText.substring(0, 100)}`);
       }
 
       return data;
