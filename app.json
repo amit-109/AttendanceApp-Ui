@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SecuryScope Attendance",
-    "slug": "AttendanceApp",
+    "slug": "securyscope-attendance",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/SE_Logo_Rev1.png",
@@ -13,10 +13,10 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/SE_Logo_Rev1.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/SE_Logo_Rev1.png"
+//        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/images/SE_Logo.png"
+//        "backgroundImage": "./assets/images/android-icon-background.png",
+//        "monochromeImage": "./assets/images/SE.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
@@ -24,7 +24,7 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.amitrai.AttendanceApp"
+      "package": "com.securyscope.AttendanceApp"
     },
     "web": {
       "output": "single",
@@ -58,7 +58,8 @@
     },
     "extra": {
       "eas": {
-        "projectId": "4f9b9b76-bffc-43b5-b8c9-4994e5ffaeed"
+//        "projectId": "4f9b9b76-bffc-43b5-b8c9-4994e5ffaeed"
+        "projectId": "96907a0c-7e9d-4a22-841e-ed2b0856e476"
       }
     }
   }
