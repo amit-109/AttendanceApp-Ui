@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { Alert, AppState } from 'react-native';
 import apiService from '../services/api';
+import { tokenStorage } from '../utils/tokenStorage';
 
 const AuthContext = createContext();
 
@@ -13,6 +14,23 @@ export const useAuth = () => {
   return context;
 };
 
+const mapTokens = (payload, fallbackRefreshToken = null) => ({
+  accessToken: payload?.access_token || payload?.token || null,
+  refreshToken: payload?.refresh_token || fallbackRefreshToken || null,
+});
+
+const normalizeUser = (userData) => {
+  if (!userData) return null;
+  return {
+    ...userData,
+    id: userData.id || userData.Id || userData.user_id || null,
+    user_id: userData.user_id || userData.id || userData.Id || null,
+    name: userData.name || userData.Name || null,
+    email: userData.email || userData.Email || null,
+    role: userData.role || userData.Role || 2,
+  };
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -20,37 +38,19 @@ export const AuthProvider = ({ children }) => {
   const [cachedData, setCachedData] = useState({
     attendanceData: [],
     leaveData: [],
-    profileData: null
+    profileData: null,
   });
 
-  // Initialize API service with token getter
-  useEffect(() => {
-    apiService.getToken = async () => {
-      try {
-        const storedToken = await AsyncStorage.getItem('authToken');
-        return storedToken;
-      } catch (error) {
-        return null;
-      }
-    };
-  }, []);
-
-  // Load stored auth data on app start
   useEffect(() => {
     initializeAppData();
   }, []);
 
   const initializeAppData = async () => {
     try {
-      await loadAuthData();
-
-      // If user is authenticated, fetch fresh data from APIs
-      if (token && user) {
-        await loadCachedData(); // Load cache first for immediate display
-        // Then fetch fresh data in background
+      await loadCachedData();
+      const restored = await restoreSession();
+      if (restored) {
         fetchFreshData();
-      } else {
-        await loadCachedData(); // Load cache even if not authenticated
       }
     } catch (error) {
       console.error('Error initializing app data:', error);
@@ -59,9 +59,8 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const fetchFreshData = async () => {
+  const fetchFreshData = async (currentUser = user) => {
     try {
-      // Fetch fresh attendance data and transform it
       const rawAttendanceData = await apiService.getAttendanceHistory();
       if (Array.isArray(rawAttendanceData)) {
         const transformedAttendanceData = rawAttendanceData.map((record, index) => ({
@@ -72,28 +71,25 @@ export const AuthProvider = ({ children }) => {
           status: 'present',
           location: {
             latitude: parseFloat(record.Latitude || record.latitude || 0),
-            longitude: parseFloat(record.Longitude || record.longitude || 0)
+            longitude: parseFloat(record.Longitude || record.longitude || 0),
           },
           photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
-          employee: user?.role === 1 ? {
+          employee: currentUser?.role === 1 ? {
             _id: record.UserId || record.user_id,
             name: record.UserName || record.user_name || 'Unknown',
-            email: record.UserEmail || record.user_email || 'unknown@email.com'
+            email: record.UserEmail || record.user_email || 'unknown@email.com',
           } : null,
-          notes: record.Notes || record.notes || null
+          notes: record.Notes || record.notes || null,
         }));
         await updateCachedAttendanceData(transformedAttendanceData);
       }
 
-      // Fetch fresh leave data
       const leaveData = await apiService.getLeaveHistory();
       if (Array.isArray(leaveData)) {
         await updateCachedLeaveData(leaveData);
       }
     } catch (error) {
-      // Handle expected "no data" errors silently
       if (error.message && (error.message.includes('No ') || error.message.includes(' found') || error.message.includes('Record not found'))) {
-        // These are expected - update cache with empty arrays
         if (error.message.includes('attendance') || error.message.includes('leave')) {
           const emptyData = [];
           if (error.message.includes('attendance')) {
@@ -108,79 +104,63 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Automatic logout detection when admin logs out user
+  const refreshSession = async () => {
+    const tokens = await tokenStorage.getTokens();
+    if (!tokens?.accessToken || !tokens?.refreshToken) {
+      return false;
+    }
+
+    const result = await apiService.relogin(tokens.accessToken, tokens.refreshToken);
+    const mapped = mapTokens(result, tokens.refreshToken);
+    const userData = normalizeUser(result?.user);
+
+    if (!mapped.accessToken || !mapped.refreshToken || !userData) {
+      throw new Error('Invalid relogin response');
+    }
+
+    setToken(mapped.accessToken);
+    setUser(userData);
+    await tokenStorage.saveTokens(mapped.accessToken, mapped.refreshToken);
+    await AsyncStorage.setItem('userData', JSON.stringify(userData));
+    await AsyncStorage.removeItem('authToken');
+    return true;
+  };
+
   useEffect(() => {
     let intervalId;
 
     const checkAuthStatus = async () => {
       if (token && user) {
         try {
-          const result = await apiService.checkLoginStatus();
-
-          // Check if user is logged out (API returns {'message': 'Not logged in'} when logged out)
-          if (!result || !result.token || result.message === 'Not logged in') {
-            // User has been logged out by admin
-            Alert.alert(
-              'Session Expired',
-              'You have been logged out by an administrator.',
-              [
-                {
-                  text: 'OK',
-                  onPress: async () => {
-                    await performLogout();
-                  },
-                },
-              ]
-            );
-          } else if (result && result.token) {
-            // Update with fresh token if provided
-            const { token: newToken, user: userData } = result;
-
-            // CRITICAL FIX: Validate user data before overwriting
-            const currentUserData = await AsyncStorage.getItem('userData');
-            const currentUser = currentUserData ? JSON.parse(currentUserData) : null;
-
-            if (currentUser && userData) {
-              const currentUserId = currentUser.id || currentUser.user_id;
-              const newUserId = userData.id || userData.user_id;
-
-              if (currentUserId !== newUserId) {
-                // Only update token, don't overwrite user data if userId doesn't match
-                setToken(newToken);
-                await AsyncStorage.setItem('authToken', newToken);
-              } else {
-                // User IDs match, proceed with normal update
-                setToken(newToken);
-                setUser(userData);
-                await AsyncStorage.setItem('authToken', newToken);
-                await AsyncStorage.setItem('userData', JSON.stringify(userData));
-              }
-            } else {
-              // If no current user data, proceed with update
-              setToken(newToken);
-              setUser(userData);
-              await AsyncStorage.setItem('authToken', newToken);
-              await AsyncStorage.setItem('userData', JSON.stringify(userData));
-            }
+          const isValid = await refreshSession();
+          if (!isValid) {
+            throw new Error('Session invalid');
           }
         } catch (error) {
-          // If there's an actual error (network, server down), assume user is still logged in
+          Alert.alert(
+            'Session Expired',
+            'Your session has expired. Please login again.',
+            [
+              {
+                text: 'OK',
+                onPress: async () => {
+                  await performLogout();
+                },
+              },
+            ]
+          );
         }
       }
     };
 
-    // Check authentication status when app comes to foreground
     const handleAppStateChange = (nextAppState) => {
       if (nextAppState === 'active') {
         checkAuthStatus();
       }
     };
 
-    // Listen for app state changes
     const subscription = AppState.addEventListener('change', handleAppStateChange);
-
-    // Periodic check every 15 seconds for near-immediate logout detection
-    intervalId = setInterval(checkAuthStatus, 15 * 1000);
+    intervalId = setInterval(checkAuthStatus, 30 * 1000);
 
     return () => {
       subscription?.remove();
@@ -203,7 +183,7 @@ export const AuthProvider = ({ children }) => {
       setCachedData({
         attendanceData,
         leaveData,
-        profileData
+        profileData,
       });
     } catch (error) {
       console.error('Error loading cached data:', error);
@@ -237,111 +217,43 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const loadAuthData = async () => {
+  const restoreSession = async () => {
     try {
-      const storedToken = await AsyncStorage.getItem('authToken');
-      const storedUser = await AsyncStorage.getItem('userData');
-
-      if (storedToken && storedUser) {
-        const userData = JSON.parse(storedUser);
-
-        setToken(storedToken);
-        setUser(userData);
-
-        // Optionally validate token with backend, but don't clear on failure
-        try {
-          const result = await apiService.checkLoginStatus();
-          if (result && result.token) {
-            // Token is still valid, update with fresh data
-            const { token: newToken, user: newUserData } = result;
-
-            // CRITICAL FIX: Validate user data before overwriting in loadAuthData too
-            if (userData && newUserData) {
-              const currentUserId = userData.id || userData.user_id;
-              const newUserId = newUserData.id || newUserData.user_id;
-
-              if (currentUserId !== newUserId) {
-                // Only update token, don't overwrite user data if userId doesn't match
-                setToken(newToken);
-                await AsyncStorage.setItem('authToken', newToken);
-              } else {
-                // User IDs match, proceed with normal update
-                setToken(newToken);
-                setUser(newUserData);
-                await AsyncStorage.setItem('authToken', newToken);
-                await AsyncStorage.setItem('userData', JSON.stringify(newUserData));
-              }
-            } else {
-              // If no current user data, proceed with update
-              setToken(newToken);
-              setUser(newUserData);
-              await AsyncStorage.setItem('authToken', newToken);
-              await AsyncStorage.setItem('userData', JSON.stringify(newUserData));
-            }
-          }
-          // If check fails, keep existing stored data
-        } catch (checkError) {
-          // Keep existing stored data, don't clear
-        }
+      const restored = await refreshSession();
+      if (restored) {
+        return true;
       }
     } catch (error) {
-      // Clear any corrupted data only if JSON parsing fails
-      if (error instanceof SyntaxError) {
-        await AsyncStorage.removeItem('authToken');
-        await AsyncStorage.removeItem('userData');
-      }
+      await performLogout();
+      return false;
     }
+
+    await AsyncStorage.removeItem('userData');
+    return false;
   };
 
   const login = async (email, password) => {
     try {
       const response = await apiService.login(email, password);
+      const mapped = mapTokens(response);
+      const userData = normalizeUser(response?.user);
 
-      const { token: newToken, user: userData } = response;
+      if (!mapped.accessToken || !mapped.refreshToken || !userData) {
+        return { success: false, error: 'Invalid login response from server (missing tokens/user)' };
+      }
 
-      // Store in state
-      setToken(newToken);
+      setToken(mapped.accessToken);
       setUser(userData);
 
-      // Store in AsyncStorage
-      await AsyncStorage.setItem('authToken', newToken);
+      await tokenStorage.saveTokens(mapped.accessToken, mapped.refreshToken);
+      await AsyncStorage.removeItem('authToken');
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
 
-      // After successful login, fetch fresh data since cache was cleared on logout
       try {
-        // Fetch fresh attendance data and transform it
-        const rawAttendanceData = await apiService.getAttendanceHistory();
-        if (Array.isArray(rawAttendanceData)) {
-          const transformedAttendanceData = rawAttendanceData.map((record, index) => ({
-            Id: record.Id || record.id || index,
-            date: record.CreatedAt || record.created_at,
-            checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
-            checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
-            status: 'present',
-            location: {
-              latitude: parseFloat(record.Latitude || record.latitude || 0),
-              longitude: parseFloat(record.Longitude || record.longitude || 0)
-            },
-            photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
-            employee: userData.role === 1 ? {
-              _id: record.UserId || record.user_id,
-              name: record.UserName || record.user_name || 'Unknown',
-              email: record.UserEmail || record.user_email || 'unknown@email.com'
-            } : null,
-            notes: record.Notes || record.notes || null
-          }));
-          await updateCachedAttendanceData(transformedAttendanceData);
-        }
-
-        // Fetch fresh leave data
-        const leaveData = await apiService.getLeaveHistory();
-        if (Array.isArray(leaveData)) {
-          await updateCachedLeaveData(leaveData);
-        }
+        await fetchFreshData(userData);
       } catch (fetchError) {
-        // Handle expected "no data" errors silently
-        if (fetchError.message && (fetchError.message.includes('No ') || fetchError.message.includes(' found') || fetchError.message.includes('Record not found'))) {
-          // These are expected - update cache with empty arrays
+        if (fetchError.message &&
+            (fetchError.message.includes('No ') || fetchError.message.includes(' found') || fetchError.message.includes('Record not found'))) {
           if (fetchError.message.includes('attendance') || fetchError.message.includes('leave')) {
             const emptyData = [];
             if (fetchError.message.includes('attendance')) {
@@ -363,11 +275,10 @@ export const AuthProvider = ({ children }) => {
 
   const performLogout = async () => {
     try {
-      // Clear state
       setToken(null);
       setUser(null);
 
-      // Clear storage
+      await tokenStorage.clearTokens();
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.removeItem('userData');
       await AsyncStorage.removeItem('deviceId');
@@ -378,7 +289,7 @@ export const AuthProvider = ({ children }) => {
       setCachedData({
         attendanceData: [],
         leaveData: [],
-        profileData: null
+        profileData: null,
       });
 
       return { success: true };
@@ -389,15 +300,10 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
-      // Call API logout
       await apiService.logout();
-
-      // Perform local logout
       await performLogout();
-
       return { success: true };
     } catch (error) {
-      // Still perform local logout even if API call fails
       await performLogout();
       return { success: false, error: error.message };
     }

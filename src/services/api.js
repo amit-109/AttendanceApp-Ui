@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Device from 'expo-device';
+import { tokenStorage } from '../utils/tokenStorage';
 
-const API_BASE_URL = 'https://api.securyscope.com/api';
+const API_BASE_URL = 'https://uat-api.securyscope.com/api';
 
 class ApiService {
   constructor() {
@@ -19,7 +20,7 @@ class ApiService {
           // Generate UUID v4 for development (Expo Go, local testing)
           deviceId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
             const r = Math.random() * 16 | 0;
-            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
           });
         } else {
@@ -75,9 +76,8 @@ class ApiService {
       }
 
       let data;
+      const responseText = await response.text();
       try {
-        const responseText = await response.text();
-        // Try to parse as JSON
         data = JSON.parse(responseText);
       } catch (parseError) {
         console.error('Failed to parse API response as JSON:', parseError);
@@ -98,7 +98,7 @@ class ApiService {
 
   async getToken() {
     try {
-      return await AsyncStorage.getItem('authToken');
+      return await tokenStorage.getAccessToken();
     } catch (error) {
       return null;
     }
@@ -127,6 +127,34 @@ class ApiService {
       return data;
     } catch (error) {
       console.error('Login Error:', error);
+      throw error;
+    }
+  }
+
+  async relogin(accessToken, refreshToken) {
+    const url = `${this.baseURL}/relogin`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || data.error || 'Session restore failed');
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Relogin Error:', error);
       throw error;
     }
   }
@@ -225,13 +253,11 @@ class ApiService {
       }
 
       let data;
+      const responseText = await response.text();
       try {
-        const responseText = await response.text();
-        // Try to parse as JSON
         data = JSON.parse(responseText);
       } catch (parseError) {
         console.error('Failed to parse API response as JSON:', parseError);
-        // Use the responseText we already have, don't read again
         console.error('Raw response:', responseText);
         throw new Error(`Invalid JSON response from server: ${responseText.substring(0, 100)}`);
       }
