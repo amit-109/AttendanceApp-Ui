@@ -5,6 +5,7 @@ import apiService from '../services/api';
 import { tokenStorage } from '../utils/tokenStorage';
 
 const AuthContext = createContext();
+const AUTH_DEBUG = true;
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -47,8 +48,10 @@ export const AuthProvider = ({ children }) => {
 
   const initializeAppData = async () => {
     try {
+      if (AUTH_DEBUG) console.log('[Auth] initializeAppData: start');
       await loadCachedData();
       const restored = await restoreSession();
+      if (AUTH_DEBUG) console.log('[Auth] initializeAppData: restoreSession result =', restored);
       if (restored) {
         fetchFreshData();
       }
@@ -106,6 +109,9 @@ export const AuthProvider = ({ children }) => {
 
   const refreshSession = async () => {
     const tokens = await tokenStorage.getTokens();
+    if (AUTH_DEBUG) {
+      console.log('[Auth] refreshSession: tokens present =', !!tokens?.accessToken, !!tokens?.refreshToken);
+    }
     if (!tokens?.accessToken || !tokens?.refreshToken) {
       return false;
     }
@@ -117,6 +123,7 @@ export const AuthProvider = ({ children }) => {
     if (!mapped.accessToken || !mapped.refreshToken || !userData) {
       throw new Error('Invalid relogin response');
     }
+    if (AUTH_DEBUG) console.log('[Auth] refreshSession: relogin success, message =', result?.message);
 
     setToken(mapped.accessToken);
     setUser(userData);
@@ -219,21 +226,26 @@ export const AuthProvider = ({ children }) => {
 
   const restoreSession = async () => {
     try {
+      if (AUTH_DEBUG) console.log('[Auth] restoreSession: trying relogin');
       const restored = await refreshSession();
       if (restored) {
+        if (AUTH_DEBUG) console.log('[Auth] restoreSession: success');
         return true;
       }
     } catch (error) {
+      if (AUTH_DEBUG) console.log('[Auth] restoreSession: failed, logging out');
       await performLogout();
       return false;
     }
 
+    if (AUTH_DEBUG) console.log('[Auth] restoreSession: no valid tokens found');
     await AsyncStorage.removeItem('userData');
     return false;
   };
 
   const login = async (email, password) => {
     try {
+      if (AUTH_DEBUG) console.log('[Auth] login: start for', email);
       const response = await apiService.login(email, password);
       const mapped = mapTokens(response);
       const userData = normalizeUser(response?.user);
@@ -248,6 +260,7 @@ export const AuthProvider = ({ children }) => {
       await tokenStorage.saveTokens(mapped.accessToken, mapped.refreshToken);
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      if (AUTH_DEBUG) console.log('[Auth] login: tokens saved, user restored');
 
       try {
         await fetchFreshData(userData);
@@ -269,12 +282,14 @@ export const AuthProvider = ({ children }) => {
 
       return { success: true };
     } catch (error) {
+      if (AUTH_DEBUG) console.log('[Auth] login: failed with', error?.message);
       return { success: false, error: error.message };
     }
   };
 
   const performLogout = async () => {
     try {
+      if (AUTH_DEBUG) console.log('[Auth] performLogout: clearing local session');
       setToken(null);
       setUser(null);
 
@@ -300,6 +315,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      if (AUTH_DEBUG) console.log('[Auth] logout: start');
       await apiService.logout();
       await performLogout();
       return { success: true };

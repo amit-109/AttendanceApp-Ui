@@ -3,35 +3,81 @@ import * as Device from 'expo-device';
 import { tokenStorage } from '../utils/tokenStorage';
 
 const API_BASE_URL = 'https://uat-api.securyscope.com/api';
+const NETWORK_DEBUG = __DEV__;
 
 class ApiService {
   constructor() {
     this.baseURL = API_BASE_URL;
   }
 
+  getLoggableBody(body) {
+    if (!body) return null;
+    if (typeof body === 'string') return body;
+    if (body instanceof FormData) return '[FormData]';
+    try {
+      return JSON.stringify(body);
+    } catch (_error) {
+      return '[Unserializable body]';
+    }
+  }
+
+  sanitizeHeaders(headers = {}) {
+    const sanitized = { ...headers };
+    if (sanitized.Authorization) {
+      sanitized.Authorization = 'Bearer ***';
+    }
+    return sanitized;
+  }
+
+  async apiFetch(url, options = {}) {
+    const method = options.method || 'GET';
+    if (NETWORK_DEBUG) {
+      console.log('[API][REQ]', method, url, {
+        headers: this.sanitizeHeaders(options.headers || {}),
+        body: this.getLoggableBody(options.body),
+      });
+    }
+
+    const response = await fetch(url, options);
+
+    if (NETWORK_DEBUG) {
+      let responsePreview = '';
+      try {
+        responsePreview = await response.clone().text();
+      } catch (_error) {
+        responsePreview = '[Unreadable response body]';
+      }
+
+      console.log('[API][RES]', method, url, {
+        status: response.status,
+        ok: response.ok,
+        body: responsePreview.substring(0, 500),
+      });
+    }
+
+    return response;
+  }
+
   async getDeviceId() {
     try {
       let deviceId = await AsyncStorage.getItem('deviceId');
       if (!deviceId) {
-        // Use UUID for development mode, Android ID for production
-        const isDevelopment = __DEV__; // React Native global variable
+        const isDevelopment = __DEV__;
 
         if (isDevelopment) {
-          // Generate UUID v4 for development (Expo Go, local testing)
           deviceId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
             const r = Math.random() * 16 | 0;
             const v = c === 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
           });
         } else {
-          // Use Android ID for production
           deviceId = Device.osInternalBuildId || `${Device.brand}_${Device.modelName}_${Date.now()}`;
         }
 
         await AsyncStorage.setItem('deviceId', deviceId);
       }
       return deviceId;
-    } catch (error) {
+    } catch (_error) {
       return `fallback_${Date.now()}`;
     }
   }
@@ -55,39 +101,32 @@ class ApiService {
     }
 
     try {
-      const response = await fetch(url, config);
+      const response = await this.apiFetch(url, config);
 
-      // First check if response is OK before trying to parse JSON
       if (!response.ok) {
         try {
           const errorText = await response.text();
           console.error('API Error Response:', errorText);
-          // Try to parse as JSON, but if it fails, use the raw text
           try {
             const errorData = JSON.parse(errorText);
             throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-          } catch (jsonError) {
-            // If not JSON, use the raw text
+          } catch (_jsonError) {
             throw new Error(`API Error: ${response.status} - ${errorText.substring(0, 100)}`);
           }
-        } catch (textError) {
+        } catch (_textError) {
           throw new Error(`API Error: ${response.status} - ${response.statusText}`);
         }
       }
 
-      let data;
       const responseText = await response.text();
       try {
-        data = JSON.parse(responseText);
+        return JSON.parse(responseText);
       } catch (parseError) {
         console.error('Failed to parse API response as JSON:', parseError);
         console.error('Raw response:', responseText);
         throw new Error(`Invalid JSON response from server: ${responseText.substring(0, 100)}`);
       }
-
-      return data;
     } catch (error) {
-      // Don't log expected "no data found" errors to avoid console spam
       if (!error.message ||
           (!error.message.includes('No ') && !error.message.includes(' found') && !error.message.includes('Record not found') && !error.message.includes('leaves'))) {
         console.error('API Error:', error);
@@ -99,18 +138,17 @@ class ApiService {
   async getToken() {
     try {
       return await tokenStorage.getAccessToken();
-    } catch (error) {
+    } catch (_error) {
       return null;
     }
   }
 
-  // Auth endpoints
   async login(email, password) {
     const deviceId = await this.getDeviceId();
     const url = `${this.baseURL}/login`;
 
     try {
-      const response = await fetch(url, {
+      const response = await this.apiFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -135,7 +173,7 @@ class ApiService {
     const url = `${this.baseURL}/relogin`;
 
     try {
-      const response = await fetch(url, {
+      const response = await this.apiFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -165,7 +203,7 @@ class ApiService {
     const user = userData ? JSON.parse(userData) : null;
 
     try {
-      await fetch(url, {
+      await this.apiFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -182,7 +220,7 @@ class ApiService {
     const url = `${this.baseURL}/check-login`;
 
     try {
-      const response = await fetch(url, {
+      const response = await this.apiFetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -198,7 +236,6 @@ class ApiService {
     }
   }
 
-  // Attendance endpoints
   async markAttendance(direction, location = null, photoUri = null) {
     const url = `${this.baseURL}/attendance`;
     const token = await this.getToken();
@@ -215,7 +252,6 @@ class ApiService {
     }
 
     if (photoUri) {
-      // For React Native, we need to handle the photo URI properly
       const fileName = `attendance_${Date.now()}.jpg`;
       formData.append('photo', {
         uri: photoUri,
@@ -225,44 +261,37 @@ class ApiService {
     }
 
     try {
-      const response = await fetch(url, {
+      const response = await this.apiFetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`
-          // Note: Don't set Content-Type for FormData - browser sets it automatically with boundary
+          'Authorization': `Bearer ${token}`,
         },
         body: formData,
       });
 
-      // First check if response is OK before trying to parse JSON
       if (!response.ok) {
         try {
           const errorText = await response.text();
           console.error('API Error Response:', errorText);
-          // Try to parse as JSON, but if it fails, use the raw text
           try {
             const errorData = JSON.parse(errorText);
             throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-          } catch (jsonError) {
-            // If not JSON, use the raw text
+          } catch (_jsonError) {
             throw new Error(`API Error: ${response.status} - ${errorText.substring(0, 100)}`);
           }
-        } catch (textError) {
+        } catch (_textError) {
           throw new Error(`API Error: ${response.status} - ${response.statusText}`);
         }
       }
 
-      let data;
       const responseText = await response.text();
       try {
-        data = JSON.parse(responseText);
+        return JSON.parse(responseText);
       } catch (parseError) {
         console.error('Failed to parse API response as JSON:', parseError);
         console.error('Raw response:', responseText);
         throw new Error(`Invalid JSON response from server: ${responseText.substring(0, 100)}`);
       }
-
-      return data;
     } catch (error) {
       console.error('Mark Attendance Error:', error);
       throw error;
@@ -274,20 +303,17 @@ class ApiService {
     const user = userData ? JSON.parse(userData) : null;
 
     if (user.role === 1) {
-      // Admin - get all attendance records
       return this.request('/attendance');
-    } else {
-      // Employee - get own attendance records
-      const userId = user.user_id || user.id;
-      return this.request(`/attendance/${userId}`);
     }
+
+    const userId = user.user_id || user.id;
+    return this.request(`/attendance/${userId}`);
   }
 
   async getAttendanceByUserId(userId) {
     return this.request(`/attendance/${userId}`);
   }
 
-  // Leave management
   async getLeaveTypes() {
     return this.request('/leave-types');
   }
@@ -317,20 +343,16 @@ class ApiService {
     const userData = await AsyncStorage.getItem('userData');
     const user = userData ? JSON.parse(userData) : null;
 
-    // If role is undefined, assume employee (role 2)
     const userRole = user.role || 2;
 
     if (userRole === 1) {
-      // Admin - get all leaves
       return this.request('/leaves');
-    } else {
-      // Employee - get own leaves via leaves-user endpoint
-      const userId = user.user_id || user.id;
-      return this.request(`/leaves-user/${userId}`);
     }
+
+    const userId = user.user_id || user.id;
+    return this.request(`/leaves-user/${userId}`);
   }
 
-  // User management APIs (Admin only)
   async updateUser(id, userData) {
     return this.request(`/users/${id}`, {
       method: 'PUT',
@@ -344,7 +366,6 @@ class ApiService {
     });
   }
 
-  // Helper methods
   async getTodayAttendanceStatus() {
     try {
       const token = await this.getToken();
@@ -357,14 +378,12 @@ class ApiService {
 
       const attendance = await this.getAttendanceByUserId(user.user_id || user.id);
 
-      // Handle case where attendance is empty or not an array
       if (!Array.isArray(attendance) || attendance.length === 0) {
         return null;
       }
 
       const today = new Date().toISOString().split('T')[0];
 
-      // Find today's records
       const todayRecords = attendance.filter(record => {
         if (!record.CreatedAt) return false;
         const recordDate = new Date(record.CreatedAt).toISOString().split('T')[0];
@@ -373,17 +392,15 @@ class ApiService {
 
       if (todayRecords.length === 0) return null;
 
-      // Sort by time to get the latest record
       todayRecords.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
 
       return {
         direction: todayRecords[0].Direction,
         created_at: todayRecords[0].CreatedAt,
         hasCheckedIn: todayRecords.some(r => r.Direction === 'IN'),
-        hasCheckedOut: todayRecords.some(r => r.Direction === 'OUT')
+        hasCheckedOut: todayRecords.some(r => r.Direction === 'OUT'),
       };
-    } catch (error) {
-      // Silently handle errors - don't show console errors for empty data
+    } catch (_error) {
       console.log('No attendance data available');
       return null;
     }
@@ -392,3 +409,4 @@ class ApiService {
 
 const apiService = new ApiService();
 export default apiService;
+
