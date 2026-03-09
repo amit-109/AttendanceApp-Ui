@@ -4,6 +4,7 @@ import { Alert, FlatList, Image, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, SegmentedButtons, Text } from 'react-native-paper';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
+import { transformAttendanceList } from '../utils/attendanceTransform';
 
 export default function AttendanceListScreen() {
   const [attendanceData, setAttendanceData] = useState([]);
@@ -45,24 +46,10 @@ export default function AttendanceListScreen() {
       }
 
       // Transform backend data to match frontend expectations
-      const transformedData = data.map((record, index) => ({
-        Id: record.Id || record.id || index,
-        date: record.CreatedAt || record.created_at,
-        checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
-        checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
-        status: 'present',
-        location: {
-          latitude: parseFloat(record.Latitude || record.latitude || 0),
-          longitude: parseFloat(record.Longitude || record.longitude || 0)
-        },
-        photo: apiService.getMediaUrl(record.PhotoPath || record.photo_path || record.Photo || record.photo),
-        employee: user.role === 1 ? {
-          _id: record.UserId || record.user_id,
-          name: record.UserName || record.user_name || 'Unknown',
-          email: record.UserEmail || record.user_email || 'unknown@email.com'
-        } : null,
-        notes: record.Notes || record.notes || null
-      }));
+      const transformedData = transformAttendanceList(data, {
+        userRole: user?.role || 2,
+        getMediaUrl: apiService.getMediaUrl.bind(apiService),
+      });
 
       setAttendanceData(transformedData);
       // Cache the data
