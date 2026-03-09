@@ -7,6 +7,9 @@ import { tokenStorage } from '../utils/tokenStorage';
 
 const AuthContext = createContext();
 const AUTH_DEBUG = true;
+const SESSION_CHECK_INTERVAL_MS = 10 * 1000;
+const PROFILE_CHECK_MIN_INTERVAL_MS = 30 * 1000;
+const RELOGIN_MIN_INTERVAL_MS = 60 * 1000;
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -116,6 +119,16 @@ const isTransientNetworkError = (error) => {
   );
 };
 
+const isAuthTokenError = (error) => {
+  const message = (error?.message || '').toLowerCase();
+  return (
+    message.includes('401') ||
+    message.includes('invalid or expired token') ||
+    message.includes('authentication required') ||
+    message.includes('unauthorized')
+  );
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -128,6 +141,8 @@ export const AuthProvider = ({ children }) => {
   const [postLogoutAlert, setPostLogoutAlert] = useState(null);
   const isSessionCheckInProgress = useRef(false);
   const hasHandledSessionExpiry = useRef(false);
+  const lastProfileCheckAtRef = useRef(0);
+  const lastReloginAtRef = useRef(0);
 
   useEffect(() => {
     initializeAppData();
@@ -255,19 +270,39 @@ export const AuthProvider = ({ children }) => {
 
       isSessionCheckInProgress.current = true;
       try {
+        const now = Date.now();
         const loginStatus = await apiService.checkLoginStatus();
-        const profileStatus = await apiService.getUserProfile();
-        const isForcedLogout =
-          isSessionRevokedByAdmin(loginStatus) ||
-          isProfileSessionRevoked(profileStatus);
+        let isForcedLogout = isSessionRevokedByAdmin(loginStatus);
+
+        if (!isForcedLogout && now - lastProfileCheckAtRef.current >= PROFILE_CHECK_MIN_INTERVAL_MS) {
+          let profileStatus = null;
+          try {
+            profileStatus = await apiService.getUserProfile();
+          } catch (profileError) {
+            if (isAuthTokenError(profileError)) {
+              const refreshed = await refreshSession();
+              if (!refreshed) {
+                throw new Error('Session invalid');
+              }
+              profileStatus = await apiService.getUserProfile();
+            } else {
+              throw profileError;
+            }
+          }
+          lastProfileCheckAtRef.current = now;
+          isForcedLogout = isProfileSessionRevoked(profileStatus);
+        }
 
         if (isForcedLogout) {
           throw new Error('Session revoked by admin');
         }
 
-        const isValid = await refreshSession();
-        if (!isValid) {
-          throw new Error('Session invalid');
+        if (now - lastReloginAtRef.current >= RELOGIN_MIN_INTERVAL_MS) {
+          const isValid = await refreshSession();
+          lastReloginAtRef.current = now;
+          if (!isValid) {
+            throw new Error('Session invalid');
+          }
         }
       } catch (_error) {
         if (isTransientNetworkError(_error)) {
@@ -281,12 +316,14 @@ export const AuthProvider = ({ children }) => {
 
     const handleAppStateChange = (nextAppState) => {
       if (nextAppState === 'active') {
+        lastProfileCheckAtRef.current = 0;
+        lastReloginAtRef.current = 0;
         checkAuthStatus();
       }
     };
 
     const subscription = AppState.addEventListener('change', handleAppStateChange);
-    intervalId = setInterval(checkAuthStatus, 10 * 1000);
+    intervalId = setInterval(checkAuthStatus, SESSION_CHECK_INTERVAL_MS);
 
     return () => {
       subscription?.remove();

@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
-import { Alert, Dimensions, Image, StyleSheet, View } from 'react-native';
+import { Alert, Dimensions, Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, Modal, Portal, Surface, Text, TextInput } from 'react-native-paper';
 import Toast from 'react-native-toast-message';
 import { useAuth } from '../contexts/AuthContext';
@@ -73,92 +73,103 @@ export default function LoginScreen() {
   };
 
   return (
-    <View style={styles.rootContainer}>
-      <LinearGradient
-        colors={['#667eea', '#764ba2', '#f093fb', '#f5576c']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.container}
+    <>
+      <KeyboardAvoidingView
+        style={styles.rootContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
       >
-        <View style={styles.overlay}>
-          <Surface style={styles.card} elevation={8}>
-            <View style={styles.content}>
-              <View style={styles.logoContainer}>
-                <Image
-                  source={require('../../assets/images/SE_Logo_Rev1.png')}
-                  style={styles.logo}
-                  resizeMode="contain"
-                />
-              </View>
-
-              <View style={styles.headerText}>
-                <Text variant="headlineLarge" style={styles.title}>
-                  Welcome Back
-                </Text>
-                <Text variant="bodyLarge" style={styles.subtitle}>
-                  Sign in to SecuryScope Attendance
-                </Text>
-              </View>
-
-              <View style={styles.formContainer}>
-                <TextInput
-                  label="Email Address"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  style={styles.input}
-                  mode="outlined"
-                />
-
-                <TextInput
-                  label="Password"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  style={styles.input}
-                  mode="outlined"
-                  right={
-                    <TextInput.Icon
-                      icon={showPassword ? "eye-off" : "eye"}
-                      onPress={() => setShowPassword(!showPassword)}
+        <LinearGradient
+          colors={['#667eea', '#764ba2', '#f093fb', '#f5576c']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.container}
+        >
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.overlay}>
+              <Surface style={styles.card} elevation={8}>
+                <View style={styles.content}>
+                  <View style={styles.logoContainer}>
+                    <Image
+                      source={require('../../assets/images/SE_Logo_Rev1.png')}
+                      style={styles.logo}
+                      resizeMode="contain"
                     />
-                  }
-                />
+                  </View>
 
-                <Button
-                  mode="contained"
-                  onPress={handleLogin}
-                  disabled={loading}
-                  style={styles.button}
-                  contentStyle={styles.buttonContent}
-                  labelStyle={styles.buttonLabel}
-                >
-                  {loading ? (
-                    <ActivityIndicator color="white" size="small" />
-                  ) : (
-                    'Sign In Securely'
-                  )}
-                </Button>
+                <View style={styles.headerText}>
+                  <Text variant="headlineLarge" style={styles.title}>
+                    Welcome Back
+                  </Text>
+                  <Text variant="bodyLarge" style={styles.subtitle}>
+                    Sign in to SecuryScope Attendance
+                  </Text>
+                </View>
 
-                <Button
-                  mode="text"
-                  onPress={() => setShowForgotPassword(true)}
-                  style={styles.forgotButton}
-                  labelStyle={styles.forgotButtonLabel}
-                >
-                  Forgot Password?
-                </Button>
+                <View style={styles.formContainer}>
+                  <TextInput
+                    label="Email Address"
+                    value={email}
+                    onChangeText={setEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    style={styles.input}
+                    mode="outlined"
+                  />
+
+                  <TextInput
+                    label="Password"
+                    value={password}
+                    onChangeText={setPassword}
+                    secureTextEntry={!showPassword}
+                    style={styles.input}
+                    mode="outlined"
+                    right={
+                      <TextInput.Icon
+                        icon={showPassword ? "eye-off" : "eye"}
+                        onPress={() => setShowPassword(!showPassword)}
+                      />
+                    }
+                  />
+
+                  <Button
+                    mode="contained"
+                    onPress={handleLogin}
+                    disabled={loading}
+                    style={styles.button}
+                    contentStyle={styles.buttonContent}
+                    labelStyle={styles.buttonLabel}
+                  >
+                    {loading ? (
+                      <ActivityIndicator color="white" size="small" />
+                    ) : (
+                      'Sign In Securely'
+                    )}
+                  </Button>
+
+                  <Button
+                    mode="text"
+                    onPress={() => setShowForgotPassword(true)}
+                    style={styles.forgotButton}
+                    labelStyle={styles.forgotButtonLabel}
+                  >
+                    Forgot Password?
+                  </Button>
+                </View>
               </View>
-            </View>
-          </Surface>
+            </Surface>
 
-          <View style={styles.footer}>
-            <Text variant="bodySmall" style={styles.footerText}>
-              Secure • Reliable • Professional
-            </Text>
-          </View>
-        </View>
+            <View style={styles.footer}>
+              <Text variant="bodySmall" style={styles.footerText}>
+                Secure • Reliable • Professional
+              </Text>
+            </View>
+            </View>
+          </ScrollView>
 
         {/* Full Screen Loader */}
         {loading && (
@@ -170,7 +181,8 @@ export default function LoginScreen() {
             </View>
           </View>
         )}
-      </LinearGradient>
+        </LinearGradient>
+      </KeyboardAvoidingView>
 
       <Portal>
         <Modal
@@ -218,7 +230,7 @@ export default function LoginScreen() {
           </View>
         </Modal>
       </Portal>
-    </View>
+    </>
   );
 }
 
@@ -227,6 +239,9 @@ const { width, height } = Dimensions.get('window');
 const styles = StyleSheet.create({
   rootContainer: {
     flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   container: {
     flex: 1,

@@ -94,7 +94,7 @@ export default function ProfileScreen() {
             Change Password
           </Button>
 
-          <Button
+          {/* <Button
             mode="outlined"
             onPress={handleLogout}
             icon="logout"
@@ -102,7 +102,7 @@ export default function ProfileScreen() {
             textColor="#dc2626"
           >
             Logout
-          </Button>
+          </Button> */}
         </View>
 
         <Portal>
