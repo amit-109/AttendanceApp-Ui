@@ -94,7 +94,15 @@ export default function ProfileScreen() {
             Change Password
           </Button>
 
-          
+          <Button
+            mode="outlined"
+            onPress={handleLogout}
+            icon="logout"
+            style={[styles.actionButton, styles.logoutButton]}
+            textColor="#dc2626"
+          >
+            Logout
+          </Button>
         </View>
 
         <Portal>

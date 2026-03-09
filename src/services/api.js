@@ -10,6 +10,42 @@ class ApiService {
     this.baseURL = API_BASE_URL;
   }
 
+  getMediaUrl(path) {
+    if (!path) return null;
+
+    const value = path.toString().trim();
+    if (!value) return null;
+
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return value;
+    }
+
+    const baseOrigin = this.baseURL.replace(/\/api\/?$/, '');
+    const normalizedPath = value.startsWith('/') ? value : `/${value}`;
+    return `${baseOrigin}${normalizedPath}`;
+  }
+
+  safeJsonParse(value, fallback = null) {
+    try {
+      return JSON.parse(value);
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  normalizeDirection(direction) {
+    return (direction || '').toString().trim().toUpperCase();
+  }
+
+  getLocalDateKey(input) {
+    const date = new Date(input);
+    if (Number.isNaN(date.getTime())) return null;
+    const y = date.getFullYear();
+    const m = `${date.getMonth() + 1}`.padStart(2, '0');
+    const d = `${date.getDate()}`.padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   getLoggableBody(body) {
     if (!body) return null;
     if (typeof body === 'string') return body;
@@ -200,7 +236,7 @@ class ApiService {
   async logout() {
     const url = `${this.baseURL}/logout`;
     const userData = await AsyncStorage.getItem('userData');
-    const user = userData ? JSON.parse(userData) : null;
+    const user = userData ? this.safeJsonParse(userData, null) : null;
 
     try {
       await this.apiFetch(url, {
@@ -228,8 +264,18 @@ class ApiService {
         body: JSON.stringify({ deviceId }),
       });
 
-      const data = await response.json();
-      return response.ok ? data : null;
+      let data = null;
+      try {
+        data = await response.json();
+      } catch (_parseError) {
+        data = null;
+      }
+
+      if (response.ok) {
+        return data;
+      }
+
+      return data || { status: false, message: `HTTP ${response.status}` };
     } catch (error) {
       console.error('Check login status error:', error);
       return null;
@@ -240,7 +286,7 @@ class ApiService {
     const url = `${this.baseURL}/attendance`;
     const token = await this.getToken();
     const userData = await AsyncStorage.getItem('userData');
-    const user = userData ? JSON.parse(userData) : null;
+    const user = userData ? this.safeJsonParse(userData, null) : null;
 
     const formData = new FormData();
     formData.append('direction', direction);
@@ -300,7 +346,11 @@ class ApiService {
 
   async getAttendanceHistory() {
     const userData = await AsyncStorage.getItem('userData');
-    const user = userData ? JSON.parse(userData) : null;
+    const user = userData ? this.safeJsonParse(userData, null) : null;
+
+    if (!user) {
+      throw new Error('Authentication required');
+    }
 
     if (user.role === 1) {
       return this.request('/attendance');
@@ -334,14 +384,18 @@ class ApiService {
 
   async getUserProfile() {
     const userData = await AsyncStorage.getItem('userData');
-    const user = userData ? JSON.parse(userData) : null;
+    const user = userData ? this.safeJsonParse(userData, null) : null;
     if (!user) return null;
     return this.request(`/users/${user.user_id || user.id}`);
   }
 
   async getLeaveHistory() {
     const userData = await AsyncStorage.getItem('userData');
-    const user = userData ? JSON.parse(userData) : null;
+    const user = userData ? this.safeJsonParse(userData, null) : null;
+
+    if (!user) {
+      throw new Error('Authentication required');
+    }
 
     const userRole = user.role || 2;
 
@@ -372,7 +426,7 @@ class ApiService {
       if (!token) return null;
 
       const userData = await AsyncStorage.getItem('userData');
-      const user = userData ? JSON.parse(userData) : null;
+      const user = userData ? this.safeJsonParse(userData, null) : null;
 
       if (!user) return null;
 
@@ -382,11 +436,12 @@ class ApiService {
         return null;
       }
 
-      const today = new Date().toISOString().split('T')[0];
+      const today = this.getLocalDateKey(new Date());
 
       const todayRecords = attendance.filter(record => {
-        if (!record.CreatedAt) return false;
-        const recordDate = new Date(record.CreatedAt).toISOString().split('T')[0];
+        const createdAt = record.CreatedAt || record.created_at || record.DateCreated || record.date_created;
+        if (!createdAt) return false;
+        const recordDate = this.getLocalDateKey(createdAt);
         return recordDate === today;
       });
 
@@ -395,10 +450,10 @@ class ApiService {
       todayRecords.sort((a, b) => new Date(b.CreatedAt) - new Date(a.CreatedAt));
 
       return {
-        direction: todayRecords[0].Direction,
-        created_at: todayRecords[0].CreatedAt,
-        hasCheckedIn: todayRecords.some(r => r.Direction === 'IN'),
-        hasCheckedOut: todayRecords.some(r => r.Direction === 'OUT'),
+        direction: this.normalizeDirection(todayRecords[0].Direction),
+        created_at: todayRecords[0].CreatedAt || todayRecords[0].created_at,
+        hasCheckedIn: todayRecords.some(r => this.normalizeDirection(r.Direction) === 'IN'),
+        hasCheckedOut: todayRecords.some(r => this.normalizeDirection(r.Direction) === 'OUT'),
       };
     } catch (_error) {
       console.log('No attendance data available');
@@ -409,4 +464,3 @@ class ApiService {
 
 const apiService = new ApiService();
 export default apiService;
-

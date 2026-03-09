@@ -55,7 +55,7 @@ export default function AttendanceListScreen() {
           latitude: parseFloat(record.Latitude || record.latitude || 0),
           longitude: parseFloat(record.Longitude || record.longitude || 0)
         },
-        photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
+        photo: apiService.getMediaUrl(record.PhotoPath || record.photo_path || record.Photo || record.photo),
         employee: user.role === 1 ? {
           _id: record.UserId || record.user_id,
           name: record.UserName || record.user_name || 'Unknown',
@@ -173,7 +173,13 @@ export default function AttendanceListScreen() {
         {item.photo && (
           <View style={styles.photoContainer}>
             <Text variant="bodySmall" style={styles.photoLabel}>Attendance Photo:</Text>
-            <Image source={{ uri: item.photo }} style={styles.photo} />
+            <Image
+              source={{ uri: item.photo }}
+              style={styles.photo}
+              onError={(event) => {
+                console.log('Attendance photo load failed:', item.photo, event?.nativeEvent?.error);
+              }}
+            />
           </View>
         )}
 

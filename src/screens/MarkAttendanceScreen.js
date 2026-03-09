@@ -12,7 +12,6 @@ export default function MarkAttendanceScreen({ navigation }) {
   const [hasCameraPermission, setHasCameraPermission] = useState(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
-  const [photo, setPhoto] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [todayStatus, setTodayStatus] = useState(null);
@@ -20,11 +19,26 @@ export default function MarkAttendanceScreen({ navigation }) {
   const cameraRef = useRef(null);
   const { user, cachedData, updateCachedAttendanceData, loading: authLoading } = useAuth();
 
+  const normalizeDirection = (direction) => (direction || '').toString().trim().toUpperCase();
+
+  const getLocalDateKey = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const y = date.getFullYear();
+    const m = `${date.getMonth() + 1}`.padStart(2, '0');
+    const d = `${date.getDate()}`.padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
   useEffect(() => {
-    // Only initialize if user is authenticated and auth loading is complete
+    if (user && user.id && !authLoading) {
+      requestPermissions();
+    }
+  }, [user, authLoading]);
+
+  useEffect(() => {
     if (user && user.id && !authLoading) {
       loadTodayStatus();
-      requestPermissions();
     }
   }, [user, authLoading, cachedData.attendanceData]);
 
@@ -43,68 +57,19 @@ export default function MarkAttendanceScreen({ navigation }) {
   };
 
   const loadTodayStatus = () => {
-    try {
-      if (!user || !cachedData.attendanceData) return;
-
-      // Get today's date
-      const today = new Date().toISOString().split('T')[0];
-
-      // Find today's records from cached data
-      const todayRecords = cachedData.attendanceData.filter(record => {
-        if (!record.date) return false;
-        const recordDate = new Date(record.date).toISOString().split('T')[0];
-        return recordDate === today;
-      });
-
-      if (todayRecords.length === 0) {
-        setTodayStatus(null);
-        setAttendanceDirection('IN');
-        return;
-      }
-
-      // Sort by time to get the latest record
-      todayRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-      const latestRecord = todayRecords[0];
-      const hasCheckedIn = todayRecords.some(r => r.checkIn);
-      const hasCheckedOut = todayRecords.some(r => r.checkOut);
-
-      const status = {
-        direction: latestRecord.checkOut ? 'OUT' : 'IN',
-        created_at: latestRecord.checkOut || latestRecord.checkIn,
-        hasCheckedIn,
-        hasCheckedOut
-      };
-
-      setTodayStatus(status);
-
-      // Determine next action based on today's records
-      if (hasCheckedIn && !hasCheckedOut) {
-        setAttendanceDirection('OUT');
-      } else if (hasCheckedIn && hasCheckedOut) {
-        // Both check-in and check-out done
-        setAttendanceDirection(null);
-      } else {
-        setAttendanceDirection('IN');
-      }
-    } catch (error) {
-      console.error('Error loading today status from cache:', error);
-      setTodayStatus(null);
-      setAttendanceDirection('IN');
-    }
+    loadTodayStatusFromData(cachedData.attendanceData || []);
   };
 
   const loadTodayStatusFromData = (attendanceData) => {
     try {
       if (!user || !attendanceData) return;
 
-      // Get today's date
-      const today = new Date().toISOString().split('T')[0];
+      const today = getLocalDateKey(new Date());
 
-      // Find today's records from provided data
       const todayRecords = attendanceData.filter(record => {
-        if (!record.date) return false;
-        const recordDate = new Date(record.date).toISOString().split('T')[0];
+        const recordTimestamp = record.date || record.created_at || record.CreatedAt;
+        if (!recordTimestamp) return false;
+        const recordDate = getLocalDateKey(recordTimestamp);
         return recordDate === today;
       });
 
@@ -118,12 +83,16 @@ export default function MarkAttendanceScreen({ navigation }) {
       todayRecords.sort((a, b) => new Date(b.date) - new Date(a.date));
 
       const latestRecord = todayRecords[0];
-      const hasCheckedIn = todayRecords.some(r => r.checkIn);
-      const hasCheckedOut = todayRecords.some(r => r.checkOut);
+      const hasCheckedIn = todayRecords.some(r =>
+        !!r.checkIn || normalizeDirection(r.direction || r.Direction) === 'IN'
+      );
+      const hasCheckedOut = todayRecords.some(r =>
+        !!r.checkOut || normalizeDirection(r.direction || r.Direction) === 'OUT'
+      );
 
       const status = {
-        direction: latestRecord.checkOut ? 'OUT' : 'IN',
-        created_at: latestRecord.checkOut || latestRecord.checkIn,
+        direction: latestRecord.checkOut ? 'OUT' : (normalizeDirection(latestRecord.direction || latestRecord.Direction) || 'IN'),
+        created_at: latestRecord.date || latestRecord.created_at || latestRecord.CreatedAt || latestRecord.checkOut || latestRecord.checkIn,
         hasCheckedIn,
         hasCheckedOut
       };
@@ -256,16 +225,17 @@ export default function MarkAttendanceScreen({ navigation }) {
         const freshData = await apiService.getAttendanceHistory();
         if (Array.isArray(freshData)) {
           const transformedData = freshData.map((record, index) => ({
+            direction: normalizeDirection(record.Direction || record.direction),
             Id: record.Id || record.id || index,
-            date: record.CreatedAt || record.created_at,
-            checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
-            checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
+            date: record.CreatedAt || record.created_at || record.DateCreated || record.date_created,
+            checkIn: normalizeDirection(record.Direction || record.direction) === 'IN' ? (record.CreatedAt || record.created_at || record.DateCreated || record.date_created) : null,
+            checkOut: normalizeDirection(record.Direction || record.direction) === 'OUT' ? (record.CreatedAt || record.created_at || record.DateCreated || record.date_created) : null,
             status: 'present',
             location: {
               latitude: parseFloat(record.Latitude || record.latitude || 0),
               longitude: parseFloat(record.Longitude || record.longitude || 0)
             },
-            photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
+            photo: apiService.getMediaUrl(record.PhotoPath || record.photo_path || record.Photo || record.photo),
             employee: user.role === 1 ? {
               _id: record.UserId || record.user_id,
               name: record.UserName || record.user_name || 'Unknown',

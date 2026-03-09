@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Alert, AppState } from 'react-native';
 import apiService from '../services/api';
 import { tokenStorage } from '../utils/tokenStorage';
@@ -32,6 +32,91 @@ const normalizeUser = (userData) => {
   };
 };
 
+const normalizeDirection = (direction) => (direction || '').toString().trim().toUpperCase();
+
+const extractLoginPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (payload.data && typeof payload.data === 'object') return payload.data;
+  return payload;
+};
+
+const isFalseLike = (value) => {
+  if (value === false || value === 0) return true;
+  if (typeof value === 'string') {
+    const v = value.trim().toLowerCase();
+    return v === 'false' || v === 'offline' || v === 'logged_out' || v === 'logout' || v === 'revoked';
+  }
+  return false;
+};
+
+const hasLogoutMessage = (value) => {
+  if (typeof value !== 'string') return false;
+  const v = value.toLowerCase();
+  return (
+    v.includes('logout') ||
+    v.includes('logged out') ||
+    v.includes('not logged in') ||
+    v.includes('session expired') ||
+    v.includes('revoked')
+  );
+};
+
+const isSessionRevokedByAdmin = (loginStatusResponse) => {
+  const payload = extractLoginPayload(loginStatusResponse);
+  if (!payload || typeof payload !== 'object') return false;
+
+  const candidates = [
+    payload.isLoggedIn,
+    payload.loggedIn,
+    payload.loginStatus,
+    payload.login_status,
+    payload.status,
+    payload.is_active_login,
+    payload.device_status,
+  ];
+
+  if (candidates.some(isFalseLike)) return true;
+  if (hasLogoutMessage(payload.message) || hasLogoutMessage(payload.error)) return true;
+
+  if (payload.user && typeof payload.user === 'object') {
+    const u = payload.user;
+    if ([u.loginStatus, u.login_status, u.isLoggedIn, u.loggedIn].some(isFalseLike)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
+const isProfileSessionRevoked = (profileResponse) => {
+  const payload = extractLoginPayload(profileResponse);
+  if (!payload || typeof payload !== 'object') return false;
+
+  const candidates = [
+    payload.loginStatus,
+    payload.login_status,
+    payload.LoginStatus,
+    payload.IsLoggedIn,
+    payload.isLoggedIn,
+    payload.loggedIn,
+    payload.device_status,
+  ];
+
+  if (candidates.some(isFalseLike)) return true;
+  if (hasLogoutMessage(payload.message) || hasLogoutMessage(payload.error)) return true;
+  return false;
+};
+
+const isTransientNetworkError = (error) => {
+  const message = (error?.message || '').toLowerCase();
+  return (
+    message.includes('network request failed') ||
+    message.includes('failed to fetch') ||
+    message.includes('timeout') ||
+    message.includes('network error')
+  );
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -41,10 +126,20 @@ export const AuthProvider = ({ children }) => {
     leaveData: [],
     profileData: null,
   });
+  const [postLogoutAlert, setPostLogoutAlert] = useState(null);
+  const isSessionCheckInProgress = useRef(false);
+  const hasHandledSessionExpiry = useRef(false);
 
   useEffect(() => {
     initializeAppData();
   }, []);
+
+  useEffect(() => {
+    if (!token && postLogoutAlert) {
+      Alert.alert(postLogoutAlert.title, postLogoutAlert.message);
+      setPostLogoutAlert(null);
+    }
+  }, [token, postLogoutAlert]);
 
   const initializeAppData = async () => {
     try {
@@ -67,16 +162,17 @@ export const AuthProvider = ({ children }) => {
       const rawAttendanceData = await apiService.getAttendanceHistory();
       if (Array.isArray(rawAttendanceData)) {
         const transformedAttendanceData = rawAttendanceData.map((record, index) => ({
+          direction: normalizeDirection(record.Direction || record.direction),
           Id: record.Id || record.id || index,
-          date: record.CreatedAt || record.created_at,
-          checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
-          checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
+          date: record.CreatedAt || record.created_at || record.DateCreated || record.date_created,
+          checkIn: normalizeDirection(record.Direction || record.direction) === 'IN' ? (record.CreatedAt || record.created_at || record.DateCreated || record.date_created) : null,
+          checkOut: normalizeDirection(record.Direction || record.direction) === 'OUT' ? (record.CreatedAt || record.created_at || record.DateCreated || record.date_created) : null,
           status: 'present',
           location: {
             latitude: parseFloat(record.Latitude || record.latitude || 0),
             longitude: parseFloat(record.Longitude || record.longitude || 0),
           },
-          photo: record.PhotoPath ? `https://api.securyscope.com${record.PhotoPath}` : null,
+          photo: apiService.getMediaUrl(record.PhotoPath || record.photo_path || record.Photo || record.photo),
           employee: currentUser?.role === 1 ? {
             _id: record.UserId || record.user_id,
             name: record.UserName || record.user_name || 'Unknown',
@@ -136,27 +232,66 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let intervalId;
 
-    const checkAuthStatus = async () => {
-      if (token && user) {
-        try {
-          const isValid = await refreshSession();
-          if (!isValid) {
-            throw new Error('Session invalid');
-          }
-        } catch (error) {
-          Alert.alert(
-            'Session Expired',
-            'Your session has expired. Please login again.',
-            [
-              {
-                text: 'OK',
-                onPress: async () => {
-                  await performLogout();
-                },
+    const handleForcedLogout = async () => {
+      if (hasHandledSessionExpiry.current) {
+        return;
+      }
+
+      hasHandledSessionExpiry.current = true;
+      const alertPayload = {
+        title: 'Session Expired',
+        message: 'You have been logged out. Please login again.',
+      };
+
+      if (AppState.currentState === 'active') {
+        Alert.alert(
+          alertPayload.title,
+          alertPayload.message,
+          [
+            {
+              text: 'OK',
+              onPress: async () => {
+                await performLogout();
               },
-            ]
-          );
+            },
+          ],
+          { cancelable: false }
+        );
+        return;
+      }
+
+      setPostLogoutAlert(alertPayload);
+      await performLogout();
+    };
+
+    const checkAuthStatus = async () => {
+      if (!token || !user || isSessionCheckInProgress.current) {
+        return;
+      }
+
+      isSessionCheckInProgress.current = true;
+      try {
+        const loginStatus = await apiService.checkLoginStatus();
+        const profileStatus = await apiService.getUserProfile();
+        const isForcedLogout =
+          isSessionRevokedByAdmin(loginStatus) ||
+          isProfileSessionRevoked(profileStatus);
+
+        if (isForcedLogout) {
+          throw new Error('Session revoked by admin');
         }
+
+        const isValid = await refreshSession();
+        if (!isValid) {
+          throw new Error('Session invalid');
+        }
+      } catch (_error) {
+        if (isTransientNetworkError(_error)) {
+          return;
+        }
+        await handleForcedLogout();
+      } finally {
+        isSessionCheckInProgress.current = false;
       }
     };
 
@@ -167,7 +302,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     const subscription = AppState.addEventListener('change', handleAppStateChange);
-    intervalId = setInterval(checkAuthStatus, 30 * 1000);
+    intervalId = setInterval(checkAuthStatus, 10 * 1000);
 
     return () => {
       subscription?.remove();
@@ -245,6 +380,8 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
+      hasHandledSessionExpiry.current = false;
+      setPostLogoutAlert(null);
       if (AUTH_DEBUG) console.log('[Auth] login: start for', email);
       const response = await apiService.login(email, password);
       const mapped = mapTokens(response);
