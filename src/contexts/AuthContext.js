@@ -2,7 +2,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Alert, AppState } from 'react-native';
 import apiService from '../services/api';
-import { transformAttendanceList } from '../utils/attendanceTransform';
 import { tokenStorage } from '../utils/tokenStorage';
 
 const AuthContext = createContext();
@@ -35,6 +34,8 @@ const normalizeUser = (userData) => {
     role: userData.role || userData.Role || 2,
   };
 };
+
+const normalizeDirection = (direction) => (direction || '').toString().trim().toUpperCase();
 
 const extractLoginPayload = (payload) => {
   if (!payload || typeof payload !== 'object') return payload;
@@ -175,10 +176,25 @@ export const AuthProvider = ({ children }) => {
     try {
       const rawAttendanceData = await apiService.getAttendanceHistory();
       if (Array.isArray(rawAttendanceData)) {
-        const transformedAttendanceData = transformAttendanceList(rawAttendanceData, {
-          userRole: currentUser?.role || 2,
-          getMediaUrl: apiService.getMediaUrl.bind(apiService),
-        });
+        const transformedAttendanceData = rawAttendanceData.map((record, index) => ({
+          direction: normalizeDirection(record.Direction || record.direction),
+          Id: record.Id || record.id || index,
+          date: record.CreatedAt || record.created_at || record.DateCreated || record.date_created,
+          checkIn: normalizeDirection(record.Direction || record.direction) === 'IN' ? (record.CreatedAt || record.created_at || record.DateCreated || record.date_created) : null,
+          checkOut: normalizeDirection(record.Direction || record.direction) === 'OUT' ? (record.CreatedAt || record.created_at || record.DateCreated || record.date_created) : null,
+          status: 'present',
+          location: {
+            latitude: parseFloat(record.Latitude || record.latitude || 0),
+            longitude: parseFloat(record.Longitude || record.longitude || 0),
+          },
+          photo: apiService.getMediaUrl(record.PhotoPath || record.photo_path || record.Photo || record.photo),
+          employee: currentUser?.role === 1 ? {
+            _id: record.UserId || record.user_id,
+            name: record.UserName || record.user_name || 'Unknown',
+            email: record.UserEmail || record.user_email || 'unknown@email.com',
+          } : null,
+          notes: record.Notes || record.notes || null,
+        }));
         await updateCachedAttendanceData(transformedAttendanceData);
       }
 
