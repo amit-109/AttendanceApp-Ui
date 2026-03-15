@@ -35,6 +35,10 @@ export default function AttendanceListScreen() {
         data = await apiService.getAttendanceByUserId(user.user_id || user.id);
       }
 
+      if (__DEV__) {
+        console.log('Attendance API raw response', data);
+      }
+
       // Ensure data is an array
       if (!Array.isArray(data)) {
         // console.log('API returned non-array data:', data);
@@ -45,24 +49,59 @@ export default function AttendanceListScreen() {
       }
 
       // Transform backend data to match frontend expectations
-      const transformedData = data.map((record, index) => ({
-        Id: record.Id || record.id || index,
-        date: record.CreatedAt || record.created_at,
-        checkIn: record.Direction === 'IN' ? (record.CreatedAt || record.created_at) : null,
-        checkOut: record.Direction === 'OUT' ? (record.CreatedAt || record.created_at) : null,
-        status: 'present',
-        location: {
+      const transformedData = data.map((record, index) => {
+        const rawDate =
+          record.AttendanceDate ||
+          record.Attendance_Date ||
+          record.CreatedAt ||
+          record.created_at ||
+          record.DateCreated ||
+          record.date_created;
+
+        const rawInTime = record.InTime || record.in_time || record.check_in || record.CheckIn;
+        const rawOutTime = record.OutTime || record.out_time || record.check_out || record.CheckOut;
+
+        const rawPhoto =
+          record.PhotoPath_IN ||
+          record.photoPath_IN ||
+          record.photo_path_in ||
+          record.PhotoPath_OUT ||
+          record.photoPath_OUT ||
+          record.photo_path_out ||
+          record.PhotoPath ||
+          record.photo_path ||
+          record.Photo ||
+          record.photo;
+
+        const date = parseDate(rawDate);
+        const checkIn = parseDate(rawInTime);
+        const checkOut = parseDate(rawOutTime);
+
+        const location = {
           latitude: parseFloat(record.Latitude || record.latitude || 0),
-          longitude: parseFloat(record.Longitude || record.longitude || 0)
-        },
-        photo: apiService.getMediaUrl(record.PhotoPath || record.photo_path || record.Photo || record.photo),
-        employee: user.role === 1 ? {
-          _id: record.UserId || record.user_id,
-          name: record.UserName || record.user_name || 'Unknown',
-          email: record.UserEmail || record.user_email || 'unknown@email.com'
-        } : null,
-        notes: record.Notes || record.notes || null
-      }));
+          longitude: parseFloat(record.Longitude || record.longitude || 0),
+        };
+
+        return {
+          Id: record.Id || record.id || `${record.UserId || record.user_id || 'user'}_${rawDate || index}`,
+          date,
+          checkIn,
+          checkOut,
+          status: checkIn ? 'present' : 'absent',
+          location: isValidLocation(location) ? location : null,
+          photo: apiService.getMediaUrl(rawPhoto),
+          employee: user.role === 1 ? {
+            _id: record.UserId || record.user_id,
+            name: record.Name || record.UserName || record.user_name || 'Unknown',
+            email: record.Email || record.UserEmail || record.user_email || 'unknown@email.com',
+          } : null,
+          notes: record.Notes || record.notes || null,
+        };
+      });
+
+      if (__DEV__) {
+        console.log('Attendance transformed data:', transformedData);
+      }
 
       setAttendanceData(transformedData);
       // Cache the data
@@ -92,8 +131,46 @@ export default function AttendanceListScreen() {
     loadAttendanceHistory(true);
   };
 
+  const parseDate = (value) => {
+    if (value === null || value === undefined) return null;
+
+    if (typeof value === 'string') {
+      const match = value.match(/\/Date\((\d+)(?:[+-]\d+)?\)\//);
+      if (match) {
+        return new Date(Number(match[1]));
+      }
+
+      const numericValue = Number(value);
+      if (!Number.isNaN(numericValue) && value.trim().length > 0) {
+        if (value.trim().length === 10) {
+          return new Date(numericValue * 1000);
+        }
+        return new Date(numericValue);
+      }
+    }
+
+    if (typeof value === 'number') {
+      if (String(value).length === 10) {
+        return new Date(value * 1000);
+      }
+      return new Date(value);
+    }
+
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const isValidLocation = (loc) => {
+    if (!loc || typeof loc !== 'object') return false;
+    const lat = Number(loc.latitude);
+    const lng = Number(loc.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+    return !(lat === 0 && lng === 0);
+  };
+
   const formatDate = (dateString) => {
-    const date = new Date(dateString);
+    const date = parseDate(dateString);
+    if (!date) return 'Unknown Date';
     return date.toLocaleDateString('en-US', {
       year: 'numeric',
       month: 'short',
@@ -102,7 +179,8 @@ export default function AttendanceListScreen() {
   };
 
   const formatTime = (dateString) => {
-    const date = new Date(dateString);
+    const date = parseDate(dateString);
+    if (!date) return '-';
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
@@ -161,7 +239,7 @@ export default function AttendanceListScreen() {
           )}
         </View>
 
-        {item.location && (
+        {isValidLocation(item.location) && (
           <View style={styles.location}>
             <MaterialIcons name="location-on" size={16} color="#2196F3" />
             <Text variant="bodySmall" style={styles.locationText}>
