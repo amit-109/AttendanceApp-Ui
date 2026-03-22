@@ -6,9 +6,9 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { ActivityIndicator, Button, Text } from 'react-native-paper';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
+import { getLocalDateKey, normalizeDirection, parseDate, transformAttendanceRecords } from '../utils/attendance';
 
 export default function MarkAttendanceScreen({ navigation }) {
-  const [location, setLocation] = useState(null);
   const [hasCameraPermission, setHasCameraPermission] = useState(null);
   const [hasLocationPermission, setHasLocationPermission] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
@@ -18,54 +18,6 @@ export default function MarkAttendanceScreen({ navigation }) {
   const [attendanceDirection, setAttendanceDirection] = useState('IN');
   const cameraRef = useRef(null);
   const { user, cachedData, updateCachedAttendanceData, loading: authLoading } = useAuth();
-
-  const normalizeDirection = (direction) => (direction || '').toString().trim().toUpperCase();
-
-  const parseDate = (value) => {
-    if (value === null || value === undefined) return null;
-
-    if (typeof value === 'string') {
-      const match = value.match(/\/Date\((\d+)(?:[+-]\d+)?\)\//);
-      if (match) {
-        return new Date(Number(match[1]));
-      }
-
-      const numericValue = Number(value);
-      if (!Number.isNaN(numericValue) && value.trim().length > 0) {
-        if (value.trim().length === 10) {
-          return new Date(numericValue * 1000);
-        }
-        return new Date(numericValue);
-      }
-    }
-
-    if (typeof value === 'number') {
-      if (String(value).length === 10) {
-        return new Date(value * 1000);
-      }
-      return new Date(value);
-    }
-
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-  };
-
-  const isValidLocation = (location) => {
-    if (!location || typeof location !== 'object') return false;
-    const lat = Number(location.latitude);
-    const lng = Number(location.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-    return !(lat === 0 && lng === 0);
-  };
-
-  const getLocalDateKey = (value) => {
-    const date = parseDate(value);
-    if (!date) return null;
-    const y = date.getFullYear();
-    const m = `${date.getMonth() + 1}`.padStart(2, '0');
-    const d = `${date.getDate()}`.padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  };
 
   useEffect(() => {
     if (user && user.id && !authLoading) {
@@ -247,7 +199,7 @@ export default function MarkAttendanceScreen({ navigation }) {
 
       // Mark attendance
       setLoadingMessage('Marking attendance...');
-      const result = await apiService.markAttendance(attendanceDirection, locationCoords, photoUri);
+      await apiService.markAttendance(attendanceDirection, locationCoords, photoUri);
 
       const actionText = attendanceDirection === 'IN' ? 'Checked in' : 'Checked out';
 
@@ -265,56 +217,11 @@ export default function MarkAttendanceScreen({ navigation }) {
       try {
         const freshData = await apiService.getAttendanceHistory();
         if (Array.isArray(freshData)) {
-          const transformedData = freshData.map((record, index) => {
-            const rawDate =
-              record.AttendanceDate ||
-              record.Attendance_Date ||
-              record.CreatedAt ||
-              record.created_at ||
-              record.DateCreated ||
-              record.date_created;
-
-            const rawInTime = record.InTime || record.in_time || record.check_in || record.CheckIn;
-            const rawOutTime = record.OutTime || record.out_time || record.check_out || record.CheckOut;
-
-            const rawPhoto =
-              record.PhotoPath_IN ||
-              record.photoPath_IN ||
-              record.photo_path_in ||
-              record.PhotoPath_OUT ||
-              record.photoPath_OUT ||
-              record.photo_path_out ||
-              record.PhotoPath ||
-              record.photo_path ||
-              record.Photo ||
-              record.photo;
-
-            const date = parseDate(rawDate);
-            const checkIn = parseDate(rawInTime);
-            const checkOut = parseDate(rawOutTime);
-
-            const location = {
-              latitude: parseFloat(record.Latitude || record.latitude || 0),
-              longitude: parseFloat(record.Longitude || record.longitude || 0),
-            };
-
-            return {
-              direction: normalizeDirection(record.Direction || record.direction),
-              Id: record.Id || record.id || `${record.UserId || record.user_id || 'user'}_${rawDate || index}`,
-              date,
-              checkIn,
-              checkOut,
-              status: checkIn ? 'present' : 'absent',
-              location: isValidLocation(location) ? location : null,
-              photo: apiService.getMediaUrl(rawPhoto),
-              employee: user.role === 1 ? {
-                _id: record.UserId || record.user_id,
-                name: record.Name || record.UserName || record.user_name || 'Unknown',
-                email: record.Email || record.UserEmail || record.user_email || 'unknown@email.com',
-              } : null,
-              notes: record.Notes || record.notes || null,
-            };
-          });
+          const transformedData = transformAttendanceRecords(
+            freshData,
+            user,
+            (path) => apiService.getMediaUrl(path)
+          );
           // Update cached data and immediately update status with fresh data
           await updateCachedAttendanceData(transformedData);
           loadTodayStatusFromData(transformedData);

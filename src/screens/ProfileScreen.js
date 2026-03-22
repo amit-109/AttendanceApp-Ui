@@ -85,14 +85,14 @@ export default function ProfileScreen() {
         </Card>
 
         <View style={styles.actions}>
-          <Button
+          {/* <Button
             mode="contained"
             onPress={() => setShowChangePassword(true)}
             icon="lock"
             style={styles.actionButton}
           >
             Change Password
-          </Button>
+          </Button> */}
 
           {/* <Button
             mode="outlined"
@@ -150,7 +150,7 @@ export default function ProfileScreen() {
               >
                 Cancel
               </Button>
-              <Button
+              {/* <Button
                 mode="contained"
                 onPress={handleChangePassword}
                 loading={loading}
@@ -158,7 +158,7 @@ export default function ProfileScreen() {
                 style={styles.modalButton}
               >
                 Change Password
-              </Button>
+              </Button> */}
             </View>
           </Modal>
         </Portal>

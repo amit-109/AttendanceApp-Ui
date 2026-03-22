@@ -1,9 +1,20 @@
 import { MaterialIcons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useEffect, useState } from 'react';
-import { Alert, FlatList, Image, StyleSheet, View } from 'react-native';
+import { Alert, FlatList, Image, Linking, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { ActivityIndicator, SegmentedButtons, Text } from 'react-native-paper';
 import { useAuth } from '../contexts/AuthContext';
 import apiService from '../services/api';
+import { isValidLocation, parseDate, transformAttendanceRecords } from '../utils/attendance';
+
+const SURFACE = '#f4f8f5';
+const CARD = '#ffffff';
+const PRIMARY = '#1f8f55';
+const PRIMARY_DARK = '#0d5c3d';
+const CHECK_OUT = '#f97316';
+const TEXT = '#14213d';
+const MUTED = '#6b7280';
+const BORDER = '#d9e5dc';
 
 export default function AttendanceListScreen() {
   const [attendanceData, setAttendanceData] = useState([]);
@@ -14,7 +25,6 @@ export default function AttendanceListScreen() {
 
   useEffect(() => {
     if (user && !authLoading) {
-      // Use cached data (already transformed by AuthContext)
       setAttendanceData(cachedData.attendanceData || []);
       setLoading(false);
     }
@@ -26,88 +36,21 @@ export default function AttendanceListScreen() {
     }
 
     try {
-      let data;
-      if (user.role === 1) {
-        // Admin - get all attendance records
-        data = await apiService.getAttendanceHistory();
-      } else {
-        // Employee - get own attendance records
-        data = await apiService.getAttendanceByUserId(user.user_id || user.id);
-      }
+      const data = user.role === 1
+        ? await apiService.getAttendanceHistory()
+        : await apiService.getAttendanceByUserId(user.user_id || user.id);
 
-      if (__DEV__) {
-        console.log('Attendance API raw response', data);
-      }
-
-      // Ensure data is an array
       if (!Array.isArray(data)) {
-        // console.log('API returned non-array data:', data);
         if (showLoading) {
           setAttendanceData([]);
         }
         return;
       }
 
-      // Transform backend data to match frontend expectations
-      const transformedData = data.map((record, index) => {
-        const rawDate =
-          record.AttendanceDate ||
-          record.Attendance_Date ||
-          record.CreatedAt ||
-          record.created_at ||
-          record.DateCreated ||
-          record.date_created;
-
-        const rawInTime = record.InTime || record.in_time || record.check_in || record.CheckIn;
-        const rawOutTime = record.OutTime || record.out_time || record.check_out || record.CheckOut;
-
-        const rawPhoto =
-          record.PhotoPath_IN ||
-          record.photoPath_IN ||
-          record.photo_path_in ||
-          record.PhotoPath_OUT ||
-          record.photoPath_OUT ||
-          record.photo_path_out ||
-          record.PhotoPath ||
-          record.photo_path ||
-          record.Photo ||
-          record.photo;
-
-        const date = parseDate(rawDate);
-        const checkIn = parseDate(rawInTime);
-        const checkOut = parseDate(rawOutTime);
-
-        const location = {
-          latitude: parseFloat(record.Latitude || record.latitude || 0),
-          longitude: parseFloat(record.Longitude || record.longitude || 0),
-        };
-
-        return {
-          Id: record.Id || record.id || `${record.UserId || record.user_id || 'user'}_${rawDate || index}`,
-          date,
-          checkIn,
-          checkOut,
-          status: checkIn ? 'present' : 'absent',
-          location: isValidLocation(location) ? location : null,
-          photo: apiService.getMediaUrl(rawPhoto),
-          employee: user.role === 1 ? {
-            _id: record.UserId || record.user_id,
-            name: record.Name || record.UserName || record.user_name || 'Unknown',
-            email: record.Email || record.UserEmail || record.user_email || 'unknown@email.com',
-          } : null,
-          notes: record.Notes || record.notes || null,
-        };
-      });
-
-      if (__DEV__) {
-        console.log('Attendance transformed data:', transformedData);
-      }
-
+      const transformedData = transformAttendanceRecords(data, user, (path) => apiService.getMediaUrl(path));
       setAttendanceData(transformedData);
-      // Cache the data
       await updateCachedAttendanceData(transformedData);
     } catch (error) {
-      // Handle "No attendance found" as valid empty result
       if (error.message && error.message.includes('No attendance found')) {
         const emptyData = [];
         setAttendanceData(emptyData);
@@ -117,7 +60,6 @@ export default function AttendanceListScreen() {
         console.error('Error loading attendance:', error);
         setAttendanceData([]);
       }
-      // For background refresh, silently handle other errors without logging
     } finally {
       if (showLoading) {
         setRefreshing(false);
@@ -131,149 +73,141 @@ export default function AttendanceListScreen() {
     loadAttendanceHistory(true);
   };
 
-  const parseDate = (value) => {
-    if (value === null || value === undefined) return null;
-
-    if (typeof value === 'string') {
-      const match = value.match(/\/Date\((\d+)(?:[+-]\d+)?\)\//);
-      if (match) {
-        return new Date(Number(match[1]));
-      }
-
-      const numericValue = Number(value);
-      if (!Number.isNaN(numericValue) && value.trim().length > 0) {
-        if (value.trim().length === 10) {
-          return new Date(numericValue * 1000);
-        }
-        return new Date(numericValue);
-      }
-    }
-
-    if (typeof value === 'number') {
-      if (String(value).length === 10) {
-        return new Date(value * 1000);
-      }
-      return new Date(value);
-    }
-
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? null : date;
-  };
-
-  const isValidLocation = (loc) => {
-    if (!loc || typeof loc !== 'object') return false;
-    const lat = Number(loc.latitude);
-    const lng = Number(loc.longitude);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
-    return !(lat === 0 && lng === 0);
-  };
-
-  const formatDate = (dateString) => {
-    const date = parseDate(dateString);
-    if (!date) return 'Unknown Date';
+  const formatDate = (value) => {
+    const date = parseDate(value);
+    if (!date) return 'Unknown date';
     return date.toLocaleDateString('en-US', {
-      year: 'numeric',
+      weekday: 'short',
       month: 'short',
       day: 'numeric',
+      year: 'numeric',
     });
   };
 
-  const formatTime = (dateString) => {
-    const date = parseDate(dateString);
-    if (!date) return '-';
+  const formatTime = (value) => {
+    const date = parseDate(value);
+    if (!date) return 'Not marked';
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
     });
   };
 
-  const getStatusColor = (status) => {
+  const getStatusMeta = (status) => {
     switch (status) {
+      case 'completed':
+        return { label: 'Completed', color: PRIMARY_DARK, backgroundColor: '#dbf5e5' };
       case 'present':
-        return '#16a34a';
-      case 'late':
-        return '#ea580c';
-      case 'absent':
-        return '#dc2626';
+        return { label: 'Checked In', color: PRIMARY, backgroundColor: '#e8f8ef' };
       default:
-        return '#6b7280';
+        return { label: 'No Record', color: MUTED, backgroundColor: '#eef2f4' };
     }
   };
 
-  const renderAttendanceItem = ({ item }) => (
-    <View style={styles.item}>
-      <View style={styles.itemContent}>
-        <View style={styles.itemHeader}>
-          <View style={styles.headerLeft}>
-            <Text variant="titleMedium" style={styles.date}>
-              {formatDate(item.date)}
-            </Text>
-            {user.role === 1 && item.employee && (
-              <Text variant="bodySmall" style={styles.employeeName}>
-                {item.employee.name} ({item.employee.email})
-              </Text>
-            )}
-          </View>
-          <Text variant="labelSmall" style={[styles.status, { color: getStatusColor(item.status) }]}>
-            {(item.status || 'UNKNOWN').toUpperCase()}
-          </Text>
+  const openMap = async (location) => {
+    if (!isValidLocation(location)) return;
+    const url = `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
+    const canOpen = await Linking.canOpenURL(url);
+    if (canOpen) {
+      Linking.openURL(url);
+    }
+  };
+
+  const renderLocation = (location) => {
+    if (!isValidLocation(location)) {
+      return (
+        <View style={styles.metaRow}>
+          <MaterialIcons name="location-on" size={16} color={MUTED} />
+          <Text style={styles.metaText}>Location not available</Text>
         </View>
+      );
+    }
 
-        <View style={styles.times}>
-          {item.checkIn && (
-            <View style={styles.timeRow}>
-              <MaterialIcons name="login" size={16} color="#4CAF50" />
-              <Text variant="bodySmall" style={styles.timeText}>
-                Check-in: {formatTime(item.checkIn)}
-              </Text>
-            </View>
-          )}
+    return (
+      <TouchableOpacity onPress={() => openMap(location)} activeOpacity={0.85} style={styles.locationButton}>
+        <MaterialIcons name="location-on" size={16} color="#0f766e" />
+        <Text style={styles.locationButtonText}>
+          {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
 
-          {item.checkOut && (
-            <View style={styles.timeRow}>
-              <MaterialIcons name="logout" size={16} color="#FF9800" />
-              <Text variant="bodySmall" style={styles.timeText}>
-                Check-out: {formatTime(item.checkOut)}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        {isValidLocation(item.location) && (
-          <View style={styles.location}>
-            <MaterialIcons name="location-on" size={16} color="#2196F3" />
-            <Text variant="bodySmall" style={styles.locationText}>
-              {item.location.latitude.toFixed(4)}, {item.location.longitude.toFixed(4)}
-            </Text>
-          </View>
-        )}
-
-        {item.photo && (
-          <View style={styles.photoContainer}>
-            <Text variant="bodySmall" style={styles.photoLabel}>Attendance Photo:</Text>
-            <Image
-              source={{ uri: item.photo }}
-              style={styles.photo}
-              onError={(event) => {
-                console.log('Attendance photo load failed:', item.photo, event?.nativeEvent?.error);
-              }}
-            />
-          </View>
-        )}
-
-        {item.notes && (
-          <Text variant="bodySmall" style={styles.notes}>
-            Note: {item.notes}
-          </Text>
-        )}
+  const renderPhoto = (photo) => (
+    photo ? (
+      <Image
+        source={{ uri: photo }}
+        style={styles.eventPhoto}
+        resizeMode="cover"
+        onError={(event) => {
+          console.log('Attendance photo load failed:', photo, event?.nativeEvent?.error);
+        }}
+      />
+    ) : (
+      <View style={styles.photoPlaceholder}>
+        <MaterialIcons name="photo-camera" size={20} color="#9ca3af" />
+        <Text style={styles.photoPlaceholderText}>No photo</Text>
       </View>
+    )
+  );
+
+  const renderEventCard = (label, icon, accentColor, time, location, photo) => (
+    <View style={styles.eventCard}>
+      <View style={styles.eventHeader}>
+        <View style={[styles.eventIconWrap, { backgroundColor: `${accentColor}18` }]}>
+          <MaterialIcons name={icon} size={20} color={accentColor} />
+        </View>
+        <View style={styles.eventHeaderText}>
+          <Text style={styles.eventLabel}>{label}</Text>
+          <Text style={styles.eventTime}>{formatTime(time)}</Text>
+        </View>
+      </View>
+
+      {renderLocation(location)}
+      {renderPhoto(photo)}
     </View>
   );
+
+  const renderAttendanceItem = ({ item }) => {
+    const statusMeta = getStatusMeta(item.status);
+
+    return (
+      <View style={styles.cardShell}>
+        <LinearGradient colors={['#ffffff', '#f7fbf8']} style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderLeft}>
+              <Text style={styles.date}>{formatDate(item.date || item.checkIn || item.checkOut)}</Text>
+              {user.role === 1 && item.employee && (
+                <Text style={styles.employeeName}>
+                  {item.employee.name} • {item.employee.email}
+                </Text>
+              )}
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: statusMeta.backgroundColor }]}>
+              <Text style={[styles.statusText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+            </View>
+          </View>
+
+          <View style={styles.timelineRow}>
+            {renderEventCard('Check In', 'login', PRIMARY, item.checkIn, item.checkInLocation, item.checkInPhoto)}
+            {renderEventCard('Check Out', 'logout', CHECK_OUT, item.checkOut, item.checkOutLocation, item.checkOutPhoto)}
+          </View>
+
+          {item.notes ? (
+            <View style={styles.noteBox}>
+              <MaterialIcons name="notes" size={16} color="#475569" />
+              <Text style={styles.noteText}>{item.notes}</Text>
+            </View>
+          ) : null}
+        </LinearGradient>
+      </View>
+    );
+  };
 
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" color={PRIMARY} />
         <Text variant="bodyLarge" style={styles.loadingText}>
           Loading attendance history...
         </Text>
@@ -283,11 +217,15 @@ export default function AttendanceListScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text variant="headlineMedium" style={styles.title}>
-          Attendance History
+      <LinearGradient colors={['#1f8f55', '#157347']} style={styles.hero}>
+        <Text style={styles.heroEyebrow}>SecuryScope</Text>
+        <Text style={styles.heroTitle}>Attendance History</Text>
+        <Text style={styles.heroSubtitle}>
+          Review daily check-in and check-out time, photo, and location in one place.
         </Text>
-        
+      </LinearGradient>
+
+      <View style={styles.content}>
         {user.role === 1 && (
           <SegmentedButtons
             value={viewMode}
@@ -300,29 +238,29 @@ export default function AttendanceListScreen() {
             style={styles.segmentedButtons}
           />
         )}
-      </View>
 
-      {attendanceData.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <MaterialIcons name="event-busy" size={64} color="#9CA3AF" />
-          <Text variant="headlineSmall" style={styles.emptyTitle}>
-            No Attendance Records
-          </Text>
-          <Text variant="bodyMedium" style={styles.emptyText}>
-            No attendance records found for your account.
-          </Text>
-        </View>
-      ) : (
-        <FlatList
-          data={attendanceData}
-          renderItem={renderAttendanceItem}
-          keyExtractor={(item, index) => (item.Id || index).toString()}
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
-          refreshing={refreshing}
-          onRefresh={onRefresh}
-        />
-      )}
+        {attendanceData.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <MaterialIcons name="event-busy" size={64} color="#9CA3AF" />
+            <Text variant="headlineSmall" style={styles.emptyTitle}>
+              No Attendance Records
+            </Text>
+            <Text variant="bodyMedium" style={styles.emptyText}>
+              No attendance records were found yet for this account.
+            </Text>
+          </View>
+        ) : (
+          <FlatList
+            data={attendanceData}
+            renderItem={renderAttendanceItem}
+            keyExtractor={(item, index) => (item.Id || index).toString()}
+            contentContainerStyle={styles.listContainer}
+            showsVerticalScrollIndicator={false}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
+        )}
+      </View>
     </View>
   );
 }
@@ -330,108 +268,202 @@ export default function AttendanceListScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: SURFACE,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f8fafc',
+    backgroundColor: SURFACE,
   },
   loadingText: {
     marginTop: 16,
-    color: '#6b7280',
+    color: MUTED,
   },
-  header: {
-    padding: 20,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+  hero: {
+    paddingHorizontal: 22,
+    paddingTop: 20,
+    paddingBottom: 26,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
-  title: {
-    fontWeight: 'bold',
-    color: '#1f2937',
-    marginBottom: 16,
+  heroEyebrow: {
+    color: '#d1fae5',
+    fontSize: 13,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    fontWeight: '700',
+  },
+  heroTitle: {
+    fontSize: 34,
+    lineHeight: 40,
+    color: '#ffffff',
+    fontWeight: '800',
+  },
+  heroSubtitle: {
+    color: '#d7f7e5',
+    marginTop: 10,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  content: {
+    flex: 1,
+    marginTop: -12,
   },
   segmentedButtons: {
-    marginTop: 8,
+    marginHorizontal: 16,
+    marginBottom: 6,
   },
   listContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    paddingTop: 12,
   },
-  item: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
+  cardShell: {
+    marginBottom: 16,
+    borderRadius: 24,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    elevation: 4,
   },
-  itemContent: {
-    padding: 16,
+  card: {
+    borderRadius: 24,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: BORDER,
   },
-  itemHeader: {
+  cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  headerLeft: {
+  cardHeaderLeft: {
     flex: 1,
+    paddingRight: 12,
   },
   date: {
-    fontWeight: '600',
-    color: '#1f2937',
+    color: TEXT,
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
   },
   employeeName: {
-    color: '#6b7280',
-    marginTop: 4,
+    color: MUTED,
+    marginTop: 6,
+    fontSize: 13,
   },
-  status: {
-    fontWeight: 'bold',
-    textTransform: 'uppercase',
+  statusBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  statusText: {
+    fontWeight: '800',
     fontSize: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
-  times: {
-    marginBottom: 8,
+  timelineRow: {
+    gap: 12,
   },
-  timeRow: {
+  eventCard: {
+    borderWidth: 1,
+    borderColor: '#e8eeea',
+    borderRadius: 18,
+    padding: 14,
+    backgroundColor: CARD,
+    marginBottom: 12,
+  },
+  eventHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 12,
   },
-  timeText: {
-    marginLeft: 8,
-    color: '#4b5563',
+  eventIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
-  location: {
+  eventHeaderText: {
+    flex: 1,
+  },
+  eventLabel: {
+    color: TEXT,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  eventTime: {
+    color: MUTED,
+    marginTop: 2,
+    fontSize: 14,
+  },
+  metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  locationText: {
+  metaText: {
+    color: MUTED,
     marginLeft: 8,
-    color: '#4b5563',
+    fontSize: 13,
   },
-  photoContainer: {
-    marginTop: 8,
+  locationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#ecfeff',
+    borderRadius: 999,
+    marginBottom: 12,
   },
-  photoLabel: {
-    color: '#6b7280',
-    marginBottom: 4,
+  locationButtonText: {
+    color: '#0f766e',
+    marginLeft: 6,
+    fontSize: 13,
+    fontWeight: '600',
   },
-  photo: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    backgroundColor: '#f3f4f6',
+  eventPhoto: {
+    width: '100%',
+    height: 170,
+    borderRadius: 16,
+    backgroundColor: '#e5e7eb',
   },
-  notes: {
-    marginTop: 8,
-    color: '#6b7280',
-    fontStyle: 'italic',
+  photoPlaceholder: {
+    height: 90,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: '#cbd5e1',
+    backgroundColor: '#f8fafc',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoPlaceholderText: {
+    color: '#94a3b8',
+    marginTop: 6,
+    fontSize: 13,
+  },
+  noteBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 14,
+    backgroundColor: '#f8fafc',
+  },
+  noteText: {
+    flex: 1,
+    color: '#475569',
+    marginLeft: 8,
+    lineHeight: 19,
   },
   emptyContainer: {
     flex: 1,
@@ -443,9 +475,10 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginTop: 16,
     marginBottom: 8,
+    textAlign: 'center',
   },
   emptyText: {
-    color: '#6b7280',
+    color: MUTED,
     textAlign: 'center',
   },
 });
