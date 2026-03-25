@@ -70,8 +70,8 @@ export default function MarkAttendanceScreen({ navigation }) {
 
       // Sort by time to get the latest record
       todayRecords.sort((a, b) => {
-        const aDate = parseDate(a.date);
-        const bDate = parseDate(b.date);
+        const aDate = parseDate(a.checkOut || a.checkIn || a.date || a.created_at || a.CreatedAt);
+        const bDate = parseDate(b.checkOut || b.checkIn || b.date || b.created_at || b.CreatedAt);
         return (bDate ? bDate.getTime() : 0) - (aDate ? aDate.getTime() : 0);
       });
 
@@ -82,10 +82,16 @@ export default function MarkAttendanceScreen({ navigation }) {
       const hasCheckedOut = todayRecords.some(r =>
         !!r.checkOut || normalizeDirection(r.direction || r.Direction) === 'OUT'
       );
+      const lastActionDirection = latestRecord.checkOut ? 'OUT' : (normalizeDirection(latestRecord.direction || latestRecord.Direction) || 'IN');
+      const lastActionAt = latestRecord.checkOut ||
+        latestRecord.checkIn ||
+        latestRecord.created_at ||
+        latestRecord.CreatedAt ||
+        latestRecord.date;
 
       const status = {
-        direction: latestRecord.checkOut ? 'OUT' : (normalizeDirection(latestRecord.direction || latestRecord.Direction) || 'IN'),
-        created_at: latestRecord.date || latestRecord.created_at || latestRecord.CreatedAt || latestRecord.checkOut || latestRecord.checkIn,
+        direction: lastActionDirection,
+        created_at: lastActionAt,
         hasCheckedIn,
         hasCheckedOut
       };
