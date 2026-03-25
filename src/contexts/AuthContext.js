@@ -8,7 +8,6 @@ import { tokenStorage } from '../utils/tokenStorage';
 const AuthContext = createContext();
 const AUTH_DEBUG = true;
 const SESSION_CHECK_INTERVAL_MS = 10 * 1000;
-const PROFILE_CHECK_MIN_INTERVAL_MS = 30 * 1000;
 const RELOGIN_MIN_INTERVAL_MS = 60 * 1000;
 
 export const useAuth = () => {
@@ -34,79 +33,6 @@ const normalizeUser = (userData) => {
     email: userData.email || userData.Email || null,
     role: userData.role || userData.Role || 2,
   };
-};
-
-const extractLoginPayload = (payload) => {
-  if (!payload || typeof payload !== 'object') return payload;
-  if (payload.data && typeof payload.data === 'object') return payload.data;
-  return payload;
-};
-
-const isFalseLike = (value) => {
-  if (value === false || value === 0) return true;
-  if (typeof value === 'string') {
-    const v = value.trim().toLowerCase();
-    return v === 'false' || v === 'offline' || v === 'logged_out' || v === 'logout' || v === 'revoked';
-  }
-  return false;
-};
-
-const hasLogoutMessage = (value) => {
-  if (typeof value !== 'string') return false;
-  const v = value.toLowerCase();
-  return (
-    v.includes('logout') ||
-    v.includes('logged out') ||
-    v.includes('not logged in') ||
-    v.includes('session expired') ||
-    v.includes('revoked')
-  );
-};
-
-const isSessionRevokedByAdmin = (loginStatusResponse) => {
-  const payload = extractLoginPayload(loginStatusResponse);
-  if (!payload || typeof payload !== 'object') return false;
-
-  const candidates = [
-    payload.isLoggedIn,
-    payload.loggedIn,
-    payload.loginStatus,
-    payload.login_status,
-    payload.status,
-    payload.is_active_login,
-    payload.device_status,
-  ];
-
-  if (candidates.some(isFalseLike)) return true;
-  if (hasLogoutMessage(payload.message) || hasLogoutMessage(payload.error)) return true;
-
-  if (payload.user && typeof payload.user === 'object') {
-    const u = payload.user;
-    if ([u.loginStatus, u.login_status, u.isLoggedIn, u.loggedIn].some(isFalseLike)) {
-      return true;
-    }
-  }
-
-  return false;
-};
-
-const isProfileSessionRevoked = (profileResponse) => {
-  const payload = extractLoginPayload(profileResponse);
-  if (!payload || typeof payload !== 'object') return false;
-
-  const candidates = [
-    payload.loginStatus,
-    payload.login_status,
-    payload.LoginStatus,
-    payload.IsLoggedIn,
-    payload.isLoggedIn,
-    payload.loggedIn,
-    payload.device_status,
-  ];
-
-  if (candidates.some(isFalseLike)) return true;
-  if (hasLogoutMessage(payload.message) || hasLogoutMessage(payload.error)) return true;
-  return false;
 };
 
 const isTransientNetworkError = (error) => {
@@ -141,7 +67,6 @@ export const AuthProvider = ({ children }) => {
   const [postLogoutAlert, setPostLogoutAlert] = useState(null);
   const isSessionCheckInProgress = useRef(false);
   const hasHandledSessionExpiry = useRef(false);
-  const lastProfileCheckAtRef = useRef(0);
   const lastReloginAtRef = useRef(0);
 
   useEffect(() => {
@@ -221,12 +146,32 @@ export const AuthProvider = ({ children }) => {
     }
     if (AUTH_DEBUG) console.log('[Auth] refreshSession: relogin success, message =', result?.message);
 
-    setToken(mapped.accessToken);
-    setUser(userData);
     await tokenStorage.saveTokens(mapped.accessToken, mapped.refreshToken);
     await AsyncStorage.setItem('userData', JSON.stringify(userData));
     await AsyncStorage.removeItem('authToken');
+    setToken(mapped.accessToken);
+    setUser(userData);
     return true;
+  };
+
+  const tryReloginOnSessionIssue = async (error = null) => {
+    try {
+      if (AUTH_DEBUG) {
+        console.log('[Auth] tryReloginOnSessionIssue: attempting relogin', error?.message || '');
+      }
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        lastReloginAtRef.current = Date.now();
+        hasHandledSessionExpiry.current = false;
+        return true;
+      }
+    } catch (refreshError) {
+      if (AUTH_DEBUG) {
+        console.log('[Auth] tryReloginOnSessionIssue: relogin failed with', refreshError?.message);
+      }
+    }
+
+    return false;
   };
 
   useEffect(() => {
@@ -272,35 +217,8 @@ export const AuthProvider = ({ children }) => {
       isSessionCheckInProgress.current = true;
       try {
         const now = Date.now();
-        const loginStatus = await apiService.checkLoginStatus();
-        let isForcedLogout = isSessionRevokedByAdmin(loginStatus);
-
-        if (!isForcedLogout && now - lastProfileCheckAtRef.current >= PROFILE_CHECK_MIN_INTERVAL_MS) {
-          let profileStatus = null;
-          try {
-            profileStatus = await apiService.getUserProfile();
-          } catch (profileError) {
-            if (isAuthTokenError(profileError)) {
-              const refreshed = await refreshSession();
-              if (!refreshed) {
-                throw new Error('Session invalid');
-              }
-              profileStatus = await apiService.getUserProfile();
-            } else {
-              throw profileError;
-            }
-          }
-          lastProfileCheckAtRef.current = now;
-          isForcedLogout = isProfileSessionRevoked(profileStatus);
-        }
-
-        if (isForcedLogout) {
-          throw new Error('Session revoked by admin');
-        }
-
         if (now - lastReloginAtRef.current >= RELOGIN_MIN_INTERVAL_MS) {
-          const isValid = await refreshSession();
-          lastReloginAtRef.current = now;
+          const isValid = await tryReloginOnSessionIssue();
           if (!isValid) {
             throw new Error('Session invalid');
           }
@@ -308,6 +226,12 @@ export const AuthProvider = ({ children }) => {
       } catch (_error) {
         if (isTransientNetworkError(_error)) {
           return;
+        }
+        if (isAuthTokenError(_error)) {
+          const recovered = await tryReloginOnSessionIssue(_error);
+          if (recovered) {
+            return;
+          }
         }
         await handleForcedLogout();
       } finally {
@@ -317,7 +241,6 @@ export const AuthProvider = ({ children }) => {
 
     const handleAppStateChange = (nextAppState) => {
       if (nextAppState === 'active') {
-        lastProfileCheckAtRef.current = 0;
         lastReloginAtRef.current = 0;
         checkAuthStatus();
       }
@@ -413,12 +336,11 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: 'Invalid login response from server (missing tokens/user)' };
       }
 
-      setToken(mapped.accessToken);
-      setUser(userData);
-
       await tokenStorage.saveTokens(mapped.accessToken, mapped.refreshToken);
       await AsyncStorage.removeItem('authToken');
       await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      setToken(mapped.accessToken);
+      setUser(userData);
       if (AUTH_DEBUG) console.log('[Auth] login: tokens saved, user restored');
 
       try {

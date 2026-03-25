@@ -65,6 +65,34 @@ class ApiService {
     return sanitized;
   }
 
+  parseErrorMessage(errorText, response) {
+    if (!errorText) {
+      return `API Error: ${response.status} - ${response.statusText}`;
+    }
+
+    const errorData = this.safeJsonParse(errorText, null);
+    if (errorData?.message || errorData?.error) {
+      return errorData.message || errorData.error;
+    }
+
+    return `API Error: ${response.status} - ${errorText.substring(0, 100)}`;
+  }
+
+  isAuthErrorStatus(response) {
+    return response?.status === 401 || response?.status === 403;
+  }
+
+  logApiIssue(label, payload, response = null) {
+    if (this.isAuthErrorStatus(response)) {
+      if (NETWORK_DEBUG) {
+        console.log(label, payload);
+      }
+      return;
+    }
+
+    console.error(label, payload);
+  }
+
   async apiFetch(url, options = {}) {
     const method = options.method || 'GET';
     if (NETWORK_DEBUG) {
@@ -142,13 +170,8 @@ class ApiService {
       if (!response.ok) {
         try {
           const errorText = await response.text();
-          console.error('API Error Response:', errorText);
-          try {
-            const errorData = JSON.parse(errorText);
-            throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-          } catch (_jsonError) {
-            throw new Error(`API Error: ${response.status} - ${errorText.substring(0, 100)}`);
-          }
+          this.logApiIssue('API Error Response:', errorText, response);
+          throw new Error(this.parseErrorMessage(errorText, response));
         } catch (_textError) {
           throw new Error(`API Error: ${response.status} - ${response.statusText}`);
         }
@@ -165,7 +188,7 @@ class ApiService {
     } catch (error) {
       if (!error.message ||
           (!error.message.includes('No ') && !error.message.includes(' found') && !error.message.includes('Record not found') && !error.message.includes('leaves'))) {
-        console.error('API Error:', error);
+        this.logApiIssue('API Error:', error, { status: error?.message?.includes('401') ? 401 : null });
       }
       throw error;
     }
@@ -228,7 +251,9 @@ class ApiService {
 
       return data;
     } catch (error) {
-      console.error('Relogin Error:', error);
+      if (NETWORK_DEBUG) {
+        console.log('Relogin Error:', error?.message || error);
+      }
       throw error;
     }
   }
@@ -248,37 +273,6 @@ class ApiService {
       });
     } catch (error) {
       console.error('Logout API Error:', error);
-    }
-  }
-
-  async checkLoginStatus() {
-    const deviceId = await this.getDeviceId();
-    const url = `${this.baseURL}/check-login`;
-
-    try {
-      const response = await this.apiFetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ deviceId }),
-      });
-
-      let data = null;
-      try {
-        data = await response.json();
-      } catch (_parseError) {
-        data = null;
-      }
-
-      if (response.ok) {
-        return data;
-      }
-
-      return data || { status: false, message: `HTTP ${response.status}` };
-    } catch (error) {
-      console.error('Check login status error:', error);
-      return null;
     }
   }
 
@@ -318,13 +312,8 @@ class ApiService {
       if (!response.ok) {
         try {
           const errorText = await response.text();
-          console.error('API Error Response:', errorText);
-          try {
-            const errorData = JSON.parse(errorText);
-            throw new Error(errorData.message || errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-          } catch (_jsonError) {
-            throw new Error(`API Error: ${response.status} - ${errorText.substring(0, 100)}`);
-          }
+          this.logApiIssue('API Error Response:', errorText, response);
+          throw new Error(this.parseErrorMessage(errorText, response));
         } catch (_textError) {
           throw new Error(`API Error: ${response.status} - ${response.statusText}`);
         }
